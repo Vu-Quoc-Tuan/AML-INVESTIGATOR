@@ -1,0 +1,51 @@
+company_id,legal_name,registration_number,incorporation_date,industry_code,registered_address_id,expected_monthly_turnover,expected_cross_border,expected_countries,declared_source_of_funds,account_purpose,representative_customer_id,kyc_risk_level
+COMP-000001,Cong ty MTV Mekong Synthetic,DN3975164665,2018-10-28,4711,ADDR-002001,25673496139,false,"[""VN""]",Investment income,General corporate,CUST-000977,LOW
+COMP-000002,Cong ty TNHH Hai Au Synthetic,DN9643415727,2019-04-06,8299,ADDR-002002,791600123,false,"[""VN""]",Business revenue,Trade settlement,CUST-000193,LOW
+COMP-000003,Doanh nghiep Tu nhan Dong A Sandbox,DN5716276373,2023-09-05,5610,ADDR-002003,1077601169,true,"[""VN"", ""CY""]",Trade receivables,Event ticketing,CUST-001509,LOW
+COMP-000004,Cong ty CP Song Hong Demo,DN2184424727,2019-02-16,5610,ADDR-002004,487743330,true,"[""VN""]",Business revenue,Trade settlement,CUST-000273,HIGH
+COMP-000005,Doanh nghiep Tu nhan Tay Nguyen Mock,DN6530855533,2022-04-14,4690,ADDR-002005,7446030689,true,"[""VN"", ""CN"", ""JP"", ""KR""]",Business revenue,Operating expenses,CUST-001067,LOW
+COMP-000006,Cong ty CP Thanh Dat Synthetic,DN9778171387,2025-10-22,6202,ADDR-002006,200000000,true,"[""VN"", ""KR"", ""CY""]",Business revenue,Trade settlement,CUST-000774,HIGH
+COMP-000007,Doanh nghiep Tu nhan Viet Hung Sandbox,DN5757795568,2025-10-03,8230,ADDR-002007,199253150,true,"[""VN"", ""KR"", ""CY""]",Investment income,Trade settlement,CUST-001867,HIGH
+COMP-000008,Cong ty TNHH Song Hong Demo,DN2261629372,2018-03-11,6202,ADDR-002008,17308908312,true,"[""VN"", ""SG"", ""CN"", ""US"", ""KR"", ""DE"", ""CY""]",Shareholder capital,General corporate,CUST-001514,LOW
+COMP-000009,Cong ty MTV Thinh Vuong Mock,DN6093994019,2021-03-09,8299,ADDR-002009,796436476,true,"[""VN"", ""SG""]",Shareholder capital,Trade settlement,CUST-001712,LOW
+COMP-000010,Doanh nghiep Tu nhan An Binh Placeholder,DN2601269241,2020-10-20,6202,ADDR-002010,4376900181,false,"[""VN""]",Business revenue,General corporate,CUST-000331,LOW
+COMP-000011,Cong ty MTV Dong A Sandbox,DN9990781111,2019-06-04,6202,ADDR-002011,5123560792,false,"[""VN""]",Business revenue,General corporate,CUST-001237,LOW
+COMP-000012,Cong ty MTV Mekong Synthetic,DN8203479350,2011-05-07,6202,ADDR-002012,602839834,false,"[""VN""]",Investment income,Trade settlement,CUST-000386,LOW
+COMP-000013,Doanh nghiep Tu nhan An Binh Placeholder,DN1951550560,2011-08-08,5610,ADDR-002013,439641371,false,"[""VN""]",Shareholder capital,Operating expenses,CUST-001517,LOW
+COMP-000014,Cong ty CP Song Hong Demo,DN4286664664,2016-10-26,5610,ADDR-002014,16410563540,true,"[""VN"", ""US"", ""JP"", ""KR""]",Trade receivables,General corporate,CUST-000750,LOW
+COMP-000015,Doanh nghiep Tu nhan Nhat Quang Sandbox,DN4926179877,2016-09-19,6202,ADDR-002015,3532612537,false,"[""VN""]",Business revenue,Operating expenses,CUST-000950,LOW
+COMP-000016,Cong ty CP Nhat Quang Sandbox,DN8989804330,2016-06-03,5229,ADDR-002016,2144440319,false,"[""VN""]",Trade receivables,Event ticketing,CUST-001728,MEDIUM
+COMP-000017,Cong ty TNHH Tay Nguyen Mock,DN1682627799,2010-01-06,6419,ADDR-002017,6755194611,false,"[""VN""]",Shareholder capital,Event ticketing,CUST-000465,HIGH
+COMP-000018,Cong ty CP Mekong Synthetic,DN5980991313,2020-08-01,5610,ADDR-002018,2558767250,true,"[""VN"", ""SG"", ""CN"", ""US"", ""KR"", ""DE""]",Investment income,Payroll disbursement,CUST-000314,HIGH
+COMP-000019,Cong ty CP An Binh Placeholder,DN2893944031,2018-12-28,5610,ADDR-002019,4319827963,false,"[""VN""]",Investment income,Event ticketing,CUST-000462,LOW
+COMP-000020,Cong ty TNHH Nhat Quang Sandbox,DN2167431891,2021-03-10,8299,ADDR-002020,1033148865,true,"[""VN""]",Business revenue,General corporate,CUST-001925,MEDIUM
+COMP-000021,Cong ty MTV Viet Hung Sandbox,DN4486543439,2025-11-02,5610,ADDR-002021,254051613,true,"[""VN"", ""KR"", ""DE""]",Business revenue,Operating expenses,CUST-000252,HIGH
+COMP-000022,Doanh nghiep Tu nhan Viet Hung Sandbox,DN5866136982,2013-04-14,5610,ADDR-002022,1420387949,true,"[""VN""]",Shareholder capital,General corporate,CUST-001030,LOW
+COMP-000023,Cong ty TNHH Tay Nguyen Mock,DN8982335947,2012-08-17,8299,ADDR-002023,2151597692,true,"[""VN"", ""US"", ""KR""]",Trade receivables,Payroll disbursement,CUST-001653,LOW
+COMP-000024,Cong ty TNHH Tay Nguyen Mock,DN8933914891,2016-02-01,8230,ADDR-002024,8000000000,true,"[""VN"", ""CY""]",Investment income,Operating expenses,CUST-000444,LOW
+COMP-000025,Cong ty CP Dong A Sandbox,DN2143184596,2022-10-16,6202,ADDR-002025,2241132806,true,"[""VN"", ""CN"", ""US"", ""JP"", ""KR""]",Business revenue,Event ticketing,CUST-001619,LOW
+COMP-000026,Cong ty CP Thinh Vuong Mock,DN9481281781,2016-12-08,7020,ADDR-002026,1221770860,false,"[""VN""]",Shareholder capital,Event ticketing,CUST-000953,LOW
+COMP-000027,Doanh nghiep Tu nhan Thinh Vuong Mock,DN9603819886,2012-08-02,8230,ADDR-002027,18450405250,true,"[""VN"", ""SG"", ""CN"", ""KR"", ""CY""]",Shareholder capital,Event ticketing,CUST-001218,LOW
+COMP-000028,Cong ty TNHH Thinh Vuong Mock,DN4574419893,2018-02-28,5229,ADDR-002028,1800302677,false,"[""VN""]",Business revenue,Event ticketing,CUST-000086,LOW
+COMP-000029,Cong ty TNHH Mekong Synthetic,DN6931926075,2025-12-06,4690,ADDR-002029,93788867,true,"[""VN"", ""KR"", ""DE"", ""CY""]",Trade receivables,General corporate,CUST-000625,MEDIUM
+COMP-000030,Cong ty CP Thanh Dat Synthetic,DN3254319216,2021-12-09,8230,ADDR-002030,3575209021,false,"[""VN""]",Investment income,Payroll disbursement,CUST-001991,LOW
+COMP-000031,Cong ty MTV Dong A Sandbox,DN7196057511,2013-08-21,6202,ADDR-002031,887935064,false,"[""VN""]",Shareholder capital,Trade settlement,CUST-000237,LOW
+COMP-000032,Doanh nghiep Tu nhan Tay Nguyen Mock,DN5341685819,2015-03-06,4711,ADDR-002032,25666474240,false,"[""VN""]",Business revenue,Operating expenses,CUST-000630,MEDIUM
+COMP-000033,Cong ty MTV Red River Demo,DN3569326692,2021-12-20,6201,ADDR-002033,18531322824,false,"[""VN""]",Trade receivables,Event ticketing,CUST-001296,LOW
+COMP-000034,Cong ty CP Dai Viet Test,DN8941003769,2025-10-18,4711,ADDR-002034,50000000,true,"[""VN"", ""JP"", ""KR"", ""DE""]",Shareholder capital,Trade settlement,CUST-000959,MEDIUM
+COMP-000035,Cong ty MTV Bao Tin Demo,DN5202643907,2019-11-02,4690,ADDR-002035,1112198687,true,"[""VN"", ""CN"", ""US""]",Shareholder capital,Payroll disbursement,CUST-001287,MEDIUM
+COMP-000036,Cong ty TNHH An Binh Placeholder,DN8024672337,2025-11-08,6419,ADDR-002036,300000000,true,"[""VN"", ""CN"", ""US""]",Business revenue,General corporate,CUST-000755,HIGH
+COMP-000037,Cong ty CP Tay Nguyen Mock,DN1314865432,2018-04-20,8230,ADDR-002037,786964400,false,"[""VN""]",Investment income,Event ticketing,CUST-000142,LOW
+COMP-000038,Cong ty TNHH Sao Mai Demo,DN8966988016,2013-10-18,5610,ADDR-002038,5562500653,false,"[""VN""]",Shareholder capital,Operating expenses,CUST-000079,LOW
+COMP-000039,Cong ty TNHH Minh Phat Sandbox,DN2328845177,2010-11-17,6202,ADDR-002039,1043603694,true,"[""VN"", ""CN"", ""US""]",Business revenue,Event ticketing,CUST-000018,LOW
+COMP-000040,Cong ty MTV An Binh Placeholder,DN4203962248,2019-12-13,6419,ADDR-002040,10000000000,false,"[""VN""]",Investment income,Payroll disbursement,CUST-001641,MEDIUM
+COMP-000041,Cong ty CP Dai Viet Test,DN6530781773,2018-03-26,8230,ADDR-002041,16416511856,true,"[""VN"", ""CN"", ""US"", ""KR""]",Trade receivables,Operating expenses,CUST-001797,MEDIUM
+COMP-000042,Cong ty CP Phuc Loc Mock,DN3553595691,2011-05-12,4711,ADDR-002042,1196543243,true,"[""VN"", ""US""]",Shareholder capital,General corporate,CUST-000659,LOW
+COMP-000043,Doanh nghiep Tu nhan Hoang Gia Ao,DN1528336898,2025-11-20,6202,ADDR-002043,50000000,true,"[""VN"", ""JP"", ""DE""]",Business revenue,Operating expenses,CUST-001420,HIGH
+COMP-000044,Doanh nghiep Tu nhan Tay Nguyen Mock,DN3042673639,2017-10-10,8299,ADDR-002044,2000000000,false,"[""VN""]",Business revenue,Trade settlement,CUST-000696,LOW
+COMP-000045,Cong ty TNHH Red River Demo,DN3647358248,2025-10-16,5229,ADDR-002045,164313022,true,"[""VN"", ""US""]",Investment income,General corporate,CUST-001478,MEDIUM
+COMP-000046,Cong ty MTV Mekong Synthetic,DN8993860620,2010-07-13,5610,ADDR-002046,2945518029,true,"[""VN""]",Business revenue,Event ticketing,CUST-000074,LOW
+COMP-000047,Cong ty MTV Thinh Vuong Mock,DN7656615625,2010-03-04,4690,ADDR-002047,3224352638,true,"[""VN"", ""SG"", ""DE"", ""CY""]",Shareholder capital,General corporate,CUST-001533,MEDIUM
+COMP-000048,Doanh nghiep Tu nhan Song Hong Demo,DN9247541311,2013-06-09,6202,ADDR-002048,9030529125,true,"[""VN"", ""SG"", ""CN"", ""US"", ""JP"", ""CY""]",Trade receivables,Event ticketing,CUST-000593,HIGH
+COMP-000049,Doanh nghiep Tu nhan Dong A Sandbox,DN8789490101,2018-08-24,6419,ADDR-002049,958463813,false,"[""VN""]",Business revenue,Event ticketing,CUST-000082,HIGH
+COMP-000050,Doanh nghiep Tu nhan Bao Tin Demo,DN1898441851,2022-01-14,6419,ADDR-002050,1301437200,false,"[""VN""]",Trade receivables,Event ticketing,CUST-000874,LOW

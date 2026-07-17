@@ -1,0 +1,56 @@
+{
+  "checksums_sha256": {
+    "accounts.csv": "3b96917f546c0e8c6b065f09716be1f6e8cfaa5aa12c9f454d18e317faba3ff6",
+    "addresses.csv": "f9ca86f1626bbe5083288ec6689d3ae71d58295b109a42e05de8e9cf294b6aea",
+    "banks.csv": "255cc7771abf365c475cd836585e58a254a982d8dfc05341360dbf7f254bd431",
+    "companies.csv": "b5327443d41acd12cc0f570041bbb30db713aaba556bc9af404056cce9bb6d57",
+    "company_ownership.csv": "2ef1037869bb41d2aa22f809e2d287d40856cdd7654816f6e209e9f15167c0f1",
+    "customers.csv": "a33ba23c4ed016b85fb3b29f977c3450d3505a3956bb914cfedf44d1ffcc224b",
+    "entity_relationships.csv": "ca4e4d7c35bff6993ab216f84582d1268735183861cd4d0c0bccc52ddcf73194",
+    "ground_truth_scenarios.json": "4d2f89675807bc1fa17e80457e4e7001e15cb173f77c92b32ce59837aef7d646",
+    "kyc_documents.jsonl": "0cac457cf15e2e281fcf83338dc75170b18940fd1a1551beb6d8ac1fd711245a",
+    "kyc_profiles.jsonl": "9d82a893642152ad8c37f023623eea617b29487fdefb002db063f78317e95919",
+    "transactions.csv": "9e6d338299d162bed3e82daf05ff292d3d2275df791eeb2d0a5ff30d18322ee1",
+    "watchlist_entries.jsonl": "935c82dbfb01b938b5fc8a0ef092a19bc77aa0c5f6f0164a872b24f17eb3d96c"
+  },
+  "config": {
+    "base_currency": "VND",
+    "crypto_platform_bank_id": "BANK-CRYPTO-DEMO-99",
+    "high_risk_foreign_bank_id": "BANK-FOREIGN-HR-88",
+    "inject_incomplete_evidence": true,
+    "max_accounts": 3000,
+    "min_accounts": 2500,
+    "n_companies": 50,
+    "n_customers": 2000,
+    "n_lookalike_scenarios": 3,
+    "n_suspicious_scenarios": 3,
+    "n_transactions": 40000,
+    "normal_foreign_countries": [
+      "SG",
+      "CN",
+      "US",
+      "JP",
+      "KR",
+      "DE"
+    ],
+    "output_dir": "data/generated",
+    "random_seed": 42,
+    "window_days": 90,
+    "world_end": "2025-12-31T23:59:59+00:00",
+    "world_start": "2025-10-02T23:59:59+00:00"
+  },
+  "counts": {
+    "accounts": 2500,
+    "banks": 13,
+    "companies": 50,
+    "customers": 2000,
+    "kyc_documents": 2095,
+    "kyc_profiles": 2050,
+    "normal_transactions": 40000,
+    "ownerships": 92,
+    "relationships": 254,
+    "scenarios": 7,
+    "transactions": 40194,
+    "watchlist": 53
+  }
+}
