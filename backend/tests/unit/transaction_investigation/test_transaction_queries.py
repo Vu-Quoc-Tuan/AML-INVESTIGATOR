@@ -1,6 +1,4 @@
 import pytest
-import pandas as pd
-from datetime import datetime
 
 from app.transaction_investigation.transaction_queries import get_account_transactions
 from app.data.provider import initialize_data_repository, get_initialized_data_repository

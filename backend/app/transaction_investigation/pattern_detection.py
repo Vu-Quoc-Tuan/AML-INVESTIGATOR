@@ -1,7 +1,4 @@
-from datetime import datetime, timedelta
 import pandas as pd
-import networkx as nx
-from typing import Any
 
 from app.data.provider import get_initialized_data_repository
 from app.schemas.common import PatternFinding, PatternType
@@ -21,7 +18,6 @@ from app.transaction_investigation.transaction_queries import get_account_transa
 
 def detect_fan_in_fan_out(account_id: str, time_window_hours: float = 24.0) -> DetectFanInOutOutput:
     config = load_config()
-    repo = get_initialized_data_repository()
     
     txns = get_account_transactions(account_id).transactions
     if not txns:

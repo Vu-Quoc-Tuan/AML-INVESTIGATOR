@@ -1,6 +1,5 @@
 from datetime import datetime
 import pandas as pd
-import networkx as nx
 
 from app.data.provider import get_initialized_data_repository
 from app.schemas.common import GraphSnapshot, NodeType, EdgeType, GraphNode, GraphEdge
