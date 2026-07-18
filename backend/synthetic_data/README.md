@@ -1,6 +1,8 @@
-# Synthetic Banking Data Generator
+# SHB-Centric Synthetic Banking Data Generator
 
-Deterministic, fully fictitious banking world for AML investigation:
+Deterministic, fully fictitious single-bank dataset for AML investigation.
+SHB is the only home bank; every other institution is an external reference
+counterparty rather than a ledger managed by this generator.
 
 - Alert detection evaluation
 - Transaction graph investigation
@@ -32,6 +34,7 @@ python -m synthetic_data.cli \
   --customers 2000 \
   --companies 50 \
   --transactions 40000 \
+  --external-accounts 1000 \
   --min-accounts 2500 \
   --max-accounts 3000 \
   --output ./data/generated
@@ -40,17 +43,23 @@ python -m synthetic_data.cli \
 Defaults are already 2000 customers / 50 companies / 2500–3000 accounts.
 With the default seed and minimum-account setting, the checked-in dataset is in
 `backend/data/generated/` and contains 2000 customer rows, 50 company rows,
-2500 account rows, and 40000 normal transactions plus scenario transactions.
+2500 SHB account rows, 1000 external counterparty observations, and 40000
+normal transactions plus scenario transactions.
+
+The normal demo mix is 45% SHB-to-SHB, 27.5% inbound, and 27.5% outbound;
+approximately 5% of all normal transactions are cross-border. **Synthetic demo
+distribution, not calibrated to SHB production traffic.**
 
 ## Output files
 
 | File | Description |
 |------|-------------|
-| `customers.csv` | Individual customers (feature columns only); exact quota |
-| `companies.csv` | Corporate customers; exact quota |
-| `accounts.csv` | Accounts (incl. demo bank/crypto/foreign accounts and `bank_id`) |
-| `transactions.csv` | Baseline + scenario transactions |
-| `banks.csv` | Bank catalog with resolvable `bank_entity_id`, country, and risk score |
+| `customers.csv` | SHB individual customers (feature columns only); exact quota |
+| `companies.csv` | SHB corporate customers; exact quota |
+| `accounts.csv` | SHB-managed accounts only; every row uses `BANK-SHB-001` |
+| `external_accounts.csv` | Limited counterparties observed through payment messages |
+| `transactions.csv` | Typed `INTERNAL`, `INBOUND`, and `OUTBOUND` SHB ledger events |
+| `banks.csv` | One SHB home-bank row plus external bank reference rows |
 | `kyc_profiles.jsonl` | Expected activity profiles |
 | `kyc_documents.jsonl` | Synthetic identity / corporate docs |
 | `company_ownership.csv` | Ownership / UBO edges |
@@ -64,25 +73,30 @@ Ground-truth columns (`scenario_id`, `is_suspicious`, `expected_*`, …) are **n
 
 ## Design
 
-1. **Entities** from behavioral profiles (salary, student, SME, import/export, …)
-2. **Ownership** chains (optional multi-layer UBO)
-3. **Normal transactions** sampled from each account’s profile (amounts, hours, channels, counterparties)
-4. **Scenario injection** mutates the world (fan-in, layering, payroll lookalike, …) without hard-coding detector outcomes into features
-5. **Watchlist** synthetic entries + screening dependency flags
-6. **Ground truth** written only to `ground_truth_scenarios.json`
-7. **Validation** (FK, balances, timestamps, GT integrity, reproducibility)
+1. **SHB entities** from behavioral profiles (salary, student, SME, import/export, …)
+2. **SHB ownership** chains (optional multi-layer UBO)
+3. **External observations** without owner IDs, KYC, balances, devices, or full ledgers
+4. **Normal transactions** with typed internal/external endpoints and exact direction quotas
+5. **Scenario injection** mutates the world (fan-in, layering, payroll lookalike, …) without hard-coding detector outcomes into features
+6. **Watchlist** synthetic entries + screening dependency flags
+7. **Ground truth** written only to `ground_truth_scenarios.json`
+8. **Validation** (SHB boundary, FK, balances, timestamps, visibility, GT integrity, reproducibility)
 
-Ordinary cross-border traffic uses declared-country demo correspondents (SG,
-CN, US, JP, KR, DE). The high-risk CY bank is reserved for injected AML
-scenarios. If planned activity needs extra liquidity, the generator emits a
-visible bank-settlement funding transaction; it never rewrites a profile's
-opening balance after observing future transactions.
+Ordinary cross-border traffic uses limited external correspondents (SG, CN, US,
+JP, KR, DE). The high-risk foreign bank is reserved for injected AML scenarios.
+If planned activity needs extra liquidity, the generator emits a visible
+inbound payment-message transaction; it never creates an external balance or
+rewrites an SHB profile's opening balance after observing future transactions.
+
+`FULL_INTERNAL` is used only when both endpoints are SHB accounts.
+`PAYMENT_MESSAGE_ONLY` is used when a transaction crosses the SHB boundary.
+`ENRICHED_EXTERNAL` is valid only when an explicit enrichment source is named.
 
 ## Scenarios (default)
 
 | Key | Type | Disposition |
 |-----|------|-------------|
-| `RAPID_FAN_IN_PASS_THROUGH` | Suspicious | `ESCALATE_FOR_SAR_REVIEW` |
+| `RAPID_FAN_IN_PASS_THROUGH` | 6 SHB + 4 external fan-in, rapid foreign outbound | `ESCALATE_FOR_SAR_REVIEW` |
 | `STRUCTURING_SMURFING` | Suspicious | `ESCALATE_FOR_SAR_REVIEW` |
 | `MULE_LAYERING_CHAIN` | Suspicious | `ESCALATE_FOR_SAR_REVIEW` |
 | `EVENT_COLLECTION` | Lookalike | `CLEARED_WITH_RATIONALE` |
@@ -111,7 +125,7 @@ synthetic_data/
   id_factory.py                # stable IDs
   profiles.py                  # behavioral profile specs
   world.py                     # in-memory state
-  entity_generator.py          # customers / companies / accounts / KYC
+  entity_generator.py          # SHB entities/accounts/KYC + external observations
   ownership_generator.py       # UBO & relationships
   normal_transaction_generator.py
   scenario_injector.py
