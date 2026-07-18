@@ -13,20 +13,24 @@ from langchain_core.tools import BaseTool
 
 from .agent_schemas import (
     MANDATORY_STAGES,
+    BehaviorMappingResponse,
     InvestigationPlanResponse,
     InvestigationReportResponse,
     PlanStep,
+    RagQuerySpec,
+    RiskHypothesis,
     ScreeningAnalysisResponse,
     WorkerAnalysisResponse,
 )
 from .prompts import (
+    BEHAVIOR_MAPPER_PROMPT,
     KYC_AGENT_PROMPT,
     PLANNER_PROMPT,
     REPORT_AGENT_PROMPT,
     SCREENING_AGENT_PROMPT,
     TRANSACTION_AGENT_PROMPT,
 )
-from .state import AgentOutput
+from .state import AgentOutput, InvestigationState
 from .tool_registry import AgentName, ToolResult
 
 
@@ -73,6 +77,15 @@ def build_screening_agent(model: Any, tools: Sequence[BaseTool]) -> Any | None:
     )
 
 
+def build_behavior_mapper_agent(model: Any) -> Any:
+    return create_agent(
+        model=model,
+        tools=[],
+        system_prompt=BEHAVIOR_MAPPER_PROMPT,
+        response_format=ToolStrategy(BehaviorMappingResponse),
+    )
+
+
 def build_report_agent(model: Any) -> Any:
     return create_agent(
         model=model,
@@ -80,6 +93,135 @@ def build_report_agent(model: Any) -> Any:
         system_prompt=REPORT_AGENT_PROMPT,
         response_format=ToolStrategy(InvestigationReportResponse),
     )
+
+
+def _scout_findings(state: InvestigationState) -> list[dict[str, Any]]:
+    case_file = state.get("case_file") or {}
+    findings = [
+        item
+        for item in (case_file.get("findings") or [])
+        if isinstance(item, dict) and item.get("finding_type") != "LEGAL_CITATION"
+    ]
+    screening = (state.get("agent_outputs") or {}).get("screening") or {}
+    findings.extend(
+        item
+        for item in (screening.get("findings") or [])
+        if isinstance(item, dict)
+    )
+    return findings
+
+
+def _scout_finding_ids(state: InvestigationState) -> set[str]:
+    return {
+        str(item["finding_id"])
+        for item in _scout_findings(state)
+        if item.get("finding_id")
+    }
+
+
+def _sanitize_behavior_mapping(
+    mapping: dict[str, Any], state: InvestigationState
+) -> dict[str, Any]:
+    """Drop legal queries that are not grounded in real scout findings."""
+
+    allowed = _scout_finding_ids(state)
+    raw_queries = mapping.get("rag_queries") or []
+    cleaned: list[dict[str, Any]] = []
+    for index, query in enumerate(raw_queries):
+        if not isinstance(query, dict):
+            continue
+        linked = [
+            str(item)
+            for item in (query.get("linked_finding_ids") or [])
+            if item and str(item) in allowed
+        ]
+        query_text = str(query.get("query_text") or "").strip()
+        if not linked or not query_text:
+            continue
+        cleaned.append(
+            {
+                "query_id": str(query.get("query_id") or f"RQ-{index + 1}"),
+                "query_text": query_text[:1000],
+                "linked_finding_ids": linked,
+                "hypothesis_tag": query.get("hypothesis_tag"),
+            }
+        )
+    summary = str(mapping.get("behavior_summary") or "").strip()
+    if not summary:
+        summary = (
+            "No scout findings available for legal enrichment"
+            if not allowed
+            else "Behavior summary unavailable"
+        )
+    hypotheses = []
+    for item in mapping.get("risk_hypotheses") or []:
+        try:
+            hypotheses.append(RiskHypothesis.model_validate(item))
+        except Exception:
+            continue
+    return BehaviorMappingResponse(
+        behavior_summary=summary[:1200],
+        rag_queries=[RagQuerySpec.model_validate(item) for item in cleaned[:5]],
+        risk_hypotheses=hypotheses,
+    ).model_dump()
+
+
+def _fallback_behavior_mapping(state: InvestigationState) -> dict[str, Any]:
+    scouts = _scout_findings(state)
+    summaries = [
+        str(item.get("summary"))
+        for item in scouts
+        if item.get("summary")
+    ]
+    linked = [str(item["finding_id"]) for item in scouts if item.get("finding_id")]
+    if not linked:
+        return BehaviorMappingResponse(
+            behavior_summary="No scout findings available for legal enrichment",
+            rag_queries=[],
+            risk_hypotheses=[],
+        ).model_dump()
+
+    behavior_summary = " ".join(summaries)[:1200] or "Scout findings present"
+    query_text = (
+        "Hành vi tài chính đáng ngờ sau đây có thể liên quan điều luật nào trong "
+        f"Bộ luật Hình sự Việt Nam: {behavior_summary}"
+    )
+    return BehaviorMappingResponse(
+        behavior_summary=behavior_summary,
+        rag_queries=[
+            RagQuerySpec(
+                query_id="RQ-FALLBACK-1",
+                query_text=query_text[:1000],
+                linked_finding_ids=linked[:10],
+                hypothesis_tag="fallback_behavior_frame",
+            )
+        ],
+        risk_hypotheses=[],
+    ).model_dump()
+
+
+def invoke_behavior_mapper(
+    agent: Any | None,
+    context: str,
+    state: InvestigationState,
+) -> tuple[dict[str, Any], str | None]:
+    """Return behavior-framed RAG queries grounded in scout findings only."""
+
+    if agent is None:
+        return _sanitize_behavior_mapping(
+            _fallback_behavior_mapping(state), state
+        ), "NoBehaviorMapperAgent"
+    try:
+        result = agent.invoke(
+            {"messages": [{"role": "user", "content": context}]},
+            config={"recursion_limit": 8},
+        )
+        mapping = _structured_response(result, BehaviorMappingResponse)
+        return _sanitize_behavior_mapping(mapping.model_dump(), state), None
+    except Exception as exc:
+        return _sanitize_behavior_mapping(
+            _fallback_behavior_mapping(state), state
+        ), type(exc).__name__
 
 
 def _structured_response(result: dict[str, Any], schema: type[Any]) -> Any:
@@ -334,6 +476,79 @@ def _finalize_screening_output(
     return output
 
 
+def _legal_mappings_from_case_file(case_file: dict[str, Any]) -> list[dict[str, Any]]:
+    """Map scout findings to articles using legal evidence linkage."""
+
+    evidence_by_id = {
+        item.get("evidence_id"): item
+        for item in case_file.get("evidence", [])
+        if isinstance(item, dict) and item.get("evidence_id")
+    }
+    scout_ids = {
+        str(item.get("finding_id"))
+        for item in case_file.get("findings", [])
+        if isinstance(item, dict)
+        and item.get("finding_id")
+        and item.get("finding_type") != "LEGAL_CITATION"
+    }
+    mappings: list[dict[str, Any]] = []
+    for finding in case_file.get("findings", []):
+        if not isinstance(finding, dict):
+            continue
+        if finding.get("finding_type") != "LEGAL_CITATION":
+            continue
+        evidence_ids = [
+            str(item) for item in (finding.get("evidence_ids") or []) if item
+        ]
+        linked_scout_ids: list[str] = []
+        articles: list[str] = []
+        for evidence_id in evidence_ids:
+            item = evidence_by_id.get(evidence_id) or {}
+            payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+            article = payload.get("article")
+            if article:
+                articles.append(str(article))
+            for linked in payload.get("linked_finding_ids") or []:
+                linked_id = str(linked)
+                if linked_id in scout_ids and linked_id not in linked_scout_ids:
+                    linked_scout_ids.append(linked_id)
+        if not evidence_ids or not articles or not linked_scout_ids:
+            continue
+        mappings.append(
+            {
+                "finding_ids": linked_scout_ids,
+                "evidence_ids": evidence_ids,
+                "article": articles[0],
+                "relevance_note": str(finding.get("summary") or articles[0]),
+            }
+        )
+    return mappings
+
+
+def _default_risk_level(case_file: dict[str, Any], validation: dict[str, Any]) -> str:
+    """Score risk from scout evidence only; legal hits never auto-escalate.
+
+    Legal citations support auditability of hypotheses. They prove that a
+    retrieved statute *may relate to a query*, not that the case is high risk.
+    """
+
+    if validation.get("status") == "FAILED":
+        return "INCONCLUSIVE"
+
+    scout_findings = [
+        item
+        for item in case_file.get("findings", [])
+        if isinstance(item, dict) and item.get("finding_type") != "LEGAL_CITATION"
+    ]
+    if not scout_findings:
+        return "INCONCLUSIVE"
+
+    screening = case_file.get("screening") or {}
+    if screening.get("status") == "CONFIRMED_MATCH":
+        return "HIGH"
+    return "MEDIUM"
+
+
 def invoke_report(
     agent: Any,
     context: str,
@@ -343,8 +558,10 @@ def invoke_report(
     validation: dict[str, Any],
     workflow_error: str | None,
 ) -> dict[str, Any]:
-    """Return a safe human-review dossier even if the provider call fails."""
+    """Return a safe automated risk dossier even if the provider call fails."""
 
+    legal_mappings = _legal_mappings_from_case_file(case_file)
+    default_risk = _default_risk_level(case_file, validation or {})
     try:
         result = agent.invoke(
             {"messages": [{"role": "user", "content": context}]},
@@ -363,21 +580,32 @@ def invoke_report(
         safe_report = InvestigationReportResponse(
             case_id=case_id,
             title="AML Investigation Dossier — generation incomplete",
-            summary="The automated draft could not be completed. Review the case data manually.",
+            summary=(
+                "The automated draft could not be completed. The case file and "
+                "validation status remain available for inspection."
+            ),
+            overall_risk_level=default_risk,  # type: ignore[arg-type]
+            risk_rationale="Automated narrative unavailable; inspect validated findings.",
+            legal_mappings=[],
             evidence_count=len(case_file.get("evidence", [])),
             validation=validation or {"status": "INCONCLUSIVE"},
             workflow_error=combined_error,
         ).model_dump()
+    # Hard override factual fields; legal_mappings only from validated citations.
     safe_report.update(
         {
             "case_id": case_id,
             "findings": list(case_file.get("findings", [])),
             "evidence_count": len(case_file.get("evidence", [])),
-            "screening_status": case_file.get("screening", {}).get("status"),
+            "screening_status": (case_file.get("screening") or {}).get("status"),
             "validation": validation,
             "workflow_error": generation_error or workflow_error,
-            "recommended_action": "HUMAN_REVIEW_REQUIRED",
-            "automated_compliance_decision": False,
+            "legal_mappings": legal_mappings,
+            "overall_risk_level": safe_report.get("overall_risk_level") or default_risk,
         }
     )
+    if not safe_report.get("risk_rationale"):
+        safe_report["risk_rationale"] = (
+            "Risk level assigned from validated scout and legal-citation findings."
+        )
     return safe_report

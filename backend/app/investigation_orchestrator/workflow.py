@@ -8,9 +8,12 @@ from typing import Any
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import START, StateGraph
 
+from app.legal_rag.config import LegalRagConfig
+from app.legal_rag.hybrid_retriever import HybridLegalRetriever, LegalRetriever
+
 from .evidence_validator import evidence_validator_node
-from .human_review import human_review_node
 from .agents import (
+    build_behavior_mapper_agent,
     build_kyc_agent,
     build_planner_agent,
     build_report_agent,
@@ -19,6 +22,8 @@ from .agents import (
 )
 from .model import build_chat_model
 from .nodes import (
+    make_behavior_mapper_node,
+    make_legal_rag_node,
     make_planner_node,
     make_screening_node,
     make_worker_node,
@@ -37,6 +42,7 @@ LLM_NODE_NAMES = {
     "transaction_agent",
     "kyc_agent",
     "screening_agent",
+    "behavior_mapper",
     "report_agent",
 }
 
@@ -58,6 +64,9 @@ def _llm_nodes(model: Any, registry: ToolRegistry) -> dict[str, Callable]:
         "screening_agent": make_screening_node(
             build_screening_agent(model, screening_tools), screening_tools
         ),
+        "behavior_mapper": make_behavior_mapper_node(
+            build_behavior_mapper_agent(model)
+        ),
         "report_agent": make_report_node(build_report_agent(model)),
     }
 
@@ -68,11 +77,14 @@ def build_workflow(
     model: Any | None = None,
     tool_registry: ToolRegistry | None = None,
     agent_nodes: Mapping[str, Callable] | None = None,
+    legal_retriever: LegalRetriever | None = None,
 ):
     """Compile the workflow with production LLMs or deterministic test nodes."""
 
     if agent_nodes is None:
-        registry = tool_registry or build_production_tool_registry()
+        registry = tool_registry or build_production_tool_registry(
+            legal_retriever=legal_retriever
+        )
         registry.require_tools()
         nodes = _llm_nodes(model or build_chat_model(), registry)
     else:
@@ -85,6 +97,8 @@ def build_workflow(
             )
         nodes = dict(agent_nodes)
 
+    retriever = legal_retriever or HybridLegalRetriever(LegalRagConfig.from_env())
+
     builder = StateGraph(InvestigationState, input_schema=InvestigationInput)
     builder.add_node("supervisor", supervisor_node)
     builder.add_node("planner", nodes["planner"])
@@ -93,9 +107,10 @@ def build_workflow(
     builder.add_node("kyc_agent", nodes["kyc_agent"])
     builder.add_node("merge_and_validate", merge_and_validate_node)
     builder.add_node("screening_agent", nodes["screening_agent"])
+    builder.add_node("behavior_mapper", nodes["behavior_mapper"])
+    builder.add_node("legal_rag", make_legal_rag_node(retriever))
     builder.add_node("evidence_validator", evidence_validator_node)
     builder.add_node("report_agent", nodes["report_agent"])
-    builder.add_node("human_review", human_review_node)
 
     builder.add_edge(START, "supervisor")
     builder.add_edge("parallel_dispatch", "transaction_agent")

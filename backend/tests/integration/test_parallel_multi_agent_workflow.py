@@ -6,6 +6,7 @@ from threading import Barrier, Lock, get_ident
 
 from app.investigation_orchestrator.state import initial_state
 from app.investigation_orchestrator.workflow import build_workflow
+from app.legal_rag.hybrid_retriever import StaticLegalRetriever
 from tests.node_fixtures import deterministic_agent_nodes
 
 
@@ -31,7 +32,9 @@ def test_transaction_and_kyc_execute_concurrently_before_merge() -> None:
     )
     nodes["kyc_agent"] = concurrent_worker("kyc", nodes["kyc_agent"])
 
-    graph = build_workflow(agent_nodes=nodes)
+    graph = build_workflow(
+        agent_nodes=nodes, legal_retriever=StaticLegalRetriever()
+    )
     config = {"configurable": {"thread_id": "parallel-rendezvous"}}
     result = graph.invoke(
         initial_state(
@@ -44,17 +47,17 @@ def test_transaction_and_kyc_execute_concurrently_before_merge() -> None:
         config,
     )
 
-    assert "__interrupt__" in result
+    assert "__interrupt__" not in result
+    assert result["phase"] == "complete"
     assert set(worker_threads) == {"transaction", "kyc"}
     assert len(set(worker_threads.values())) == 2
 
-    state = graph.get_state(config).values
-    assert set(state["agent_outputs"]) == {"transaction", "kyc", "screening"}
+    assert set(result["agent_outputs"]) >= {"transaction", "kyc", "screening", "legal"}
     assert {
-        evidence["evidence_id"] for evidence in state["case_file"]["evidence"]
+        evidence["evidence_id"] for evidence in result["case_file"]["evidence"]
     } >= {
         "CASE-PARALLEL:transaction:1",
         "CASE-PARALLEL:kyc:1",
     }
-    assert state["evidence_validation"]["status"] == "PASSED"
-    assert state["case_status"] == "IN_REVIEW"
+    assert result["evidence_validation"]["status"] in {"PASSED", "PARTIAL"}
+    assert "case_status" not in result

@@ -37,9 +37,17 @@ def register_production_kyc_tools(
         raise ToolConfigurationError("KYC tool registration failed") from exc
 
 
-def build_production_tool_registry() -> ToolRegistry:
-    """Compose available factories and reject an incomplete production graph."""
+def build_production_tool_registry(
+    *,
+    legal_retriever: Any | None = None,
+) -> ToolRegistry:
+    """Compose agent-owned tool factories.
 
+    ``legal_retriever`` is accepted for call-site compatibility but is unused:
+    Legal RAG is a deterministic graph node, not a ToolRegistry owner.
+    """
+
+    del legal_retriever  # explicit: not part of the agent tool graph
     registry = ToolRegistry()
     register_production_transaction_tools(registry)
     register_production_kyc_tools(registry)

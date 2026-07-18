@@ -10,8 +10,12 @@ from langchain_core.tools import BaseTool
 from langgraph.graph import END
 from langgraph.types import Command
 
-from .agents import invoke_planner, invoke_worker
-from .prompts import planner_context, screening_context, worker_context
+from app.legal_rag.config import LegalRagConfig
+from app.legal_rag.hybrid_retriever import LegalRetriever
+from app.legal_rag.tool_adapter import hits_to_boundary
+
+from .agents import invoke_behavior_mapper, invoke_planner, invoke_worker
+from .prompts import behavior_mapper_context, planner_context, screening_context, worker_context
 from .state import AgentOutput, HandoffRecord, InvestigationState
 
 
@@ -19,9 +23,10 @@ SupervisorDestination = Literal[
     "planner",
     "parallel_dispatch",
     "screening_agent",
+    "behavior_mapper",
+    "legal_rag",
     "evidence_validator",
     "report_agent",
-    "human_review",
     "__end__",
 ]
 
@@ -35,46 +40,49 @@ def supervisor_node(
 ) -> Command[SupervisorDestination]:
     """Apply mandatory routing rules and hand control to the next stage."""
 
-    review = state.get("human_review")
-    if review:
-        decision = review["decision"]
-        status = {
-            "APPROVED": "APPROVED",
-            "REJECTED": "REJECTED",
-            "MORE_INFORMATION_REQUIRED": "AWAITING_INFORMATION",
-        }[decision]
-        return Command(
-            update={
-                "phase": "complete",
-                "case_status": status,
-                "handoff_log": [
-                    _handoff("supervisor", "end", f"Human decision: {decision}")
-                ],
-            },
-            goto=END,
-        )
-
     if state.get("workflow_error"):
         if state.get("case_file") and not state.get("evidence_validation"):
-            target = "evidence_validator"
-            phase = "evidence_validation"
+            # Prefer finishing validation + report when scouts already produced data.
+            if "legal" not in state.get("agent_outputs", {}) and state.get(
+                "behavior_mapping"
+            ):
+                target: SupervisorDestination = "legal_rag"
+                phase = "legal_enrichment"
+                reason = "Complete legal enrichment before failure dossier"
+            elif not state.get("behavior_mapping") and state.get("case_file"):
+                target = "behavior_mapper"
+                phase = "legal_enrichment"
+                reason = "Map behaviors before failure dossier"
+            elif not state.get("evidence_validation"):
+                target = "evidence_validator"
+                phase = "evidence_validation"
+                reason = "Validate evidence before failure dossier"
+            else:
+                target = "report_agent"
+                phase = "reporting"
+                reason = "Draft failure dossier"
         elif not state.get("report"):
             target = "report_agent"
             phase = "reporting"
+            reason = "Draft failure dossier"
         else:
-            target = "human_review"
-            phase = "human_review"
+            return Command(
+                update={
+                    "phase": "complete",
+                    "handoff_log": [
+                        _handoff(
+                            "supervisor",
+                            "end",
+                            "Investigation complete after failure dossier",
+                        )
+                    ],
+                },
+                goto=END,
+            )
         return Command(
             update={
                 "phase": phase,
-                "case_status": "IN_REVIEW",
-                "handoff_log": [
-                    _handoff(
-                        "supervisor",
-                        target,
-                        "Workflow failure requires validated evidence and human review",
-                    )
-                ],
+                "handoff_log": [_handoff("supervisor", target, reason)],
             },
             goto=target,
         )
@@ -90,7 +98,15 @@ def supervisor_node(
     elif "screening" not in state.get("agent_outputs", {}):
         target = "screening_agent"
         phase = "screening"
-        reason = "Run screening after investigation evidence is merged"
+        reason = "Run watchlist screening after investigation evidence is merged"
+    elif not state.get("behavior_mapping"):
+        target = "behavior_mapper"
+        phase = "legal_enrichment"
+        reason = "Frame behaviors into legal retrieval queries"
+    elif "legal" not in state.get("agent_outputs", {}):
+        target = "legal_rag"
+        phase = "legal_enrichment"
+        reason = "Retrieve penal-code passages for framed behaviors"
     elif not state.get("evidence_validation"):
         target = "evidence_validator"
         phase = "evidence_validation"
@@ -98,16 +114,25 @@ def supervisor_node(
     elif not state.get("report"):
         target = "report_agent"
         phase = "reporting"
-        reason = "Draft the evidence-backed dossier"
+        reason = "Draft the risk dossier"
     else:
-        target = "human_review"
-        phase = "human_review"
-        reason = "A human must make the final decision"
+        return Command(
+            update={
+                "phase": "complete",
+                "handoff_log": [
+                    _handoff(
+                        "supervisor",
+                        "end",
+                        "Investigation complete after risk dossier",
+                    )
+                ],
+            },
+            goto=END,
+        )
 
     return Command(
         update={
             "phase": phase,
-            "case_status": "IN_REVIEW" if target == "human_review" else "OPEN",
             "handoff_log": [_handoff("supervisor", target, reason)],
         },
         goto=target,
@@ -164,7 +189,6 @@ def merge_and_validate_node(
         return Command(
             update={
                 "phase": "reporting",
-                "case_status": "IN_REVIEW",
                 "workflow_error": message,
                 "case_file": {
                     "case_id": state["case_id"],
@@ -194,7 +218,6 @@ def merge_and_validate_node(
         return Command(
             update={
                 "phase": "reporting",
-                "case_status": "IN_REVIEW",
                 "workflow_error": message,
                 "case_file": {
                     "case_id": state["case_id"],
@@ -251,7 +274,7 @@ def merge_and_validate_node(
 def make_screening_node(
     agent: Any | None, tools: Sequence[BaseTool]
 ) -> Callable[[InvestigationState], Command]:
-    """Adapt screening output and route provider failures to a reviewable dossier."""
+    """Adapt screening output and continue the one-way pipeline."""
 
     def screening_agent_node(
         state: InvestigationState,
@@ -269,3 +292,142 @@ def make_screening_node(
         return Command(update=update, goto="supervisor")
 
     return screening_agent_node
+
+
+def make_behavior_mapper_node(
+    agent: Any | None,
+) -> Callable[[InvestigationState], Command]:
+    """Frame scout findings into legal RAG queries without inventing evidence."""
+
+    def behavior_mapper_node(
+        state: InvestigationState,
+    ) -> Command[Literal["supervisor"]]:
+        mapping, error_type = invoke_behavior_mapper(
+            agent, behavior_mapper_context(state), state
+        )
+        update: dict[str, Any] = {
+            "behavior_mapping": mapping,
+            "handoff_log": [
+                _handoff(
+                    "behavior_mapper",
+                    "supervisor",
+                    "Behavior framed into legal retrieval queries",
+                )
+            ],
+        }
+        if error_type:
+            update["errors"] = [f"Behavior mapper fallback used: {error_type}"]
+        return Command(update=update, goto="supervisor")
+
+    return behavior_mapper_node
+
+
+def make_legal_rag_node(
+    retriever: LegalRetriever,
+    config: LegalRagConfig | None = None,
+) -> Callable[[InvestigationState], Command]:
+    """Deterministic hybrid legal retrieval from behavior-mapped queries."""
+
+    cfg = config or LegalRagConfig.from_env()
+
+    def legal_rag_node(state: InvestigationState) -> Command[Literal["supervisor"]]:
+        mapping = state.get("behavior_mapping") or {}
+        queries = mapping.get("rag_queries") or []
+        findings: list[dict[str, Any]] = []
+        evidence: list[dict[str, Any]] = []
+        warnings: list[str] = []
+        query_results: list[dict[str, Any]] = []
+        available = True
+        status = "COMPLETED"
+
+        if not queries:
+            status = "NO_DATA"
+            available = False
+            warnings.append("NO_RAG_QUERIES")
+        else:
+            for index, query in enumerate(queries):
+                if not isinstance(query, dict):
+                    warnings.append(f"invalid_query[{index}]")
+                    continue
+                query_id = str(query.get("query_id") or f"RQ-{index + 1}")
+                query_text = str(query.get("query_text") or "").strip()
+                linked = [
+                    str(item)
+                    for item in (query.get("linked_finding_ids") or [])
+                    if item
+                ]
+                if not linked:
+                    warnings.append(f"{query_id}:missing_scout_links")
+                    continue
+                if not query_text:
+                    warnings.append(f"{query_id}:empty_query")
+                    continue
+                try:
+                    hits = retriever.retrieve(query_text, top_k=cfg.top_k)
+                    boundary = hits_to_boundary(
+                        query_id=query_id,
+                        query_text=query_text,
+                        hits=hits,
+                        linked_finding_ids=linked,
+                        config=cfg,
+                    )
+                except Exception as exc:
+                    available = False
+                    status = "ERROR"
+                    warnings.append(f"{query_id}:{type(exc).__name__}")
+                    continue
+
+                artifact = boundary.model_dump(mode="json")
+                query_results.append(artifact.get("data") or {})
+                warnings.extend(list(artifact.get("warnings") or []))
+                if artifact.get("status") == "ERROR":
+                    available = False
+                    status = "ERROR"
+                elif artifact.get("status") == "NO_DATA" and status == "COMPLETED":
+                    status = "INCONCLUSIVE"
+                for item in artifact.get("evidence") or []:
+                    if isinstance(item, dict):
+                        evidence.append(item)
+                data = artifact.get("data") or {}
+                for hit in data.get("hits") or []:
+                    if not isinstance(hit, dict):
+                        continue
+                    evidence_id = hit.get("evidence_id")
+                    if not evidence_id:
+                        continue
+                    findings.append(
+                        {
+                            "finding_id": f"{state['case_id']}:finding:legal:{query_id}:{hit.get('rank', 1)}",
+                            "finding_type": "LEGAL_CITATION",
+                            "summary": (
+                                f"Penal-code passage {hit.get('article')} may relate to "
+                                f"behavior query {query_id}"
+                            ),
+                            "evidence_ids": [evidence_id],
+                            "visibility_level": "FULL_INTERNAL",
+                        }
+                    )
+
+        output: AgentOutput = {
+            "agent": "legal_rag",
+            "status": status,
+            "available": available and bool(evidence),
+            "findings": findings,
+            "evidence": evidence,
+            "metadata": {
+                "warnings": warnings,
+                "query_results": query_results,
+                "behavior_summary": mapping.get("behavior_summary"),
+            },
+        }
+        update: dict[str, Any] = {
+            "agent_outputs": {"legal": output},
+            "handoff_log": [
+                _handoff("legal_rag", "supervisor", "Legal retrieval completed")
+            ],
+        }
+        if status == "ERROR":
+            update["errors"] = ["Legal RAG retrieval failed"]
+        return Command(update=update, goto="supervisor")
+
+    return legal_rag_node

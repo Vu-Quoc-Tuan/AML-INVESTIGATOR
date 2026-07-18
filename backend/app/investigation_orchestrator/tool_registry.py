@@ -9,7 +9,9 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 
-AgentName = Literal["transaction", "kyc", "screening"]
+# Legal RAG runs as a deterministic graph node (direct retriever), not as an
+# agent-owned tool pack. Keep AgentName open for optional registration in tests.
+AgentName = Literal["transaction", "kyc", "screening", "legal"]
 REQUIRED_TOOL_OWNERS: tuple[AgentName, ...] = (
     "transaction",
     "kyc",
@@ -37,6 +39,7 @@ class ToolResult(BaseModel):
     KYC evidence used by a finding requires ``data.entity_scope=SHB_INTERNAL``.
     A confirmed screening match additionally requires a tool-derived
     ``entity_scope`` and ``match_basis`` of ``IDENTIFIER`` or ``MULTI_ATTRIBUTE``.
+    Legal citations require ``source_system=VN_PENAL_CODE_RAG`` evidence ids.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -56,6 +59,7 @@ class ToolRegistry:
             "transaction": {},
             "kyc": {},
             "screening": {},
+            "legal": {},
         }
 
     def register(self, owner: AgentName, tools: Iterable[BaseTool]) -> None:

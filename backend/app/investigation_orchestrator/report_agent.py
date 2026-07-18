@@ -12,7 +12,7 @@ from .prompts import report_context
 from .state import InvestigationState
 
 
-def _reviewable_error(state: InvestigationState) -> str | None:
+def _pipeline_error(state: InvestigationState) -> str | None:
     workflow_error = state.get("workflow_error")
     if workflow_error:
         return workflow_error
@@ -21,12 +21,12 @@ def _reviewable_error(state: InvestigationState) -> str | None:
 
 
 def make_report_node(agent: Any) -> Callable[[InvestigationState], Command]:
-    """Build a reviewable dossier from validated state only."""
+    """Build an investigation dossier from validated state only."""
 
     def report_agent_node(
         state: InvestigationState,
     ) -> Command[Literal["supervisor"]]:
-        workflow_error = _reviewable_error(state)
+        workflow_error = _pipeline_error(state)
         report = invoke_report(
             agent,
             report_context(state),

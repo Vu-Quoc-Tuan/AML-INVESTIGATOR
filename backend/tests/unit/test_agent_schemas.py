@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.investigation_orchestrator.agent_schemas import (
+    BehaviorMappingResponse,
     InvestigationPlanResponse,
     InvestigationReportResponse,
     ScreeningAnalysisResponse,
@@ -15,9 +16,9 @@ def _valid_plan() -> dict:
         "transaction_investigation",
         "kyc_entity_investigation",
         "screening_and_compliance",
+        "legal_enrichment",
         "evidence_validation",
-        "report_generation",
-        "human_review",
+        "risk_dossier_generation",
     )
     return {
         "case_summary": "Review the alert",
@@ -43,7 +44,31 @@ def test_plan_json_schema_exposes_exact_step_count_to_the_model() -> None:
     assert steps_schema["maxItems"] == 6
 
 
-def test_report_contract_cannot_authorize_an_automated_decision() -> None:
+def test_behavior_mapping_allows_empty_rag_queries_when_no_scout_grounding() -> None:
+    mapping = BehaviorMappingResponse.model_validate(
+        {"behavior_summary": "No scout findings available", "rag_queries": []}
+    )
+    assert mapping.rag_queries == []
+
+
+def test_report_contract_is_risk_dossier() -> None:
+    report = InvestigationReportResponse.model_validate(
+        {
+            "case_id": "CASE-1",
+            "title": "Dossier",
+            "summary": "Summary",
+            "overall_risk_level": "HIGH",
+            "risk_rationale": "Pass-through plus legal citation",
+            "evidence_count": 0,
+        }
+    )
+    dumped = report.model_dump()
+    assert dumped["overall_risk_level"] == "HIGH"
+    assert "recommended_action" not in dumped
+    assert "automated_compliance_decision" not in dumped
+
+
+def test_report_contract_rejects_unknown_hitl_fields() -> None:
     with pytest.raises(ValidationError):
         InvestigationReportResponse.model_validate(
             {
@@ -51,8 +76,7 @@ def test_report_contract_cannot_authorize_an_automated_decision() -> None:
                 "title": "Dossier",
                 "summary": "Summary",
                 "evidence_count": 0,
-                "recommended_action": "AUTO_APPROVE",
-                "automated_compliance_decision": True,
+                "recommended_action": "DOSSIER_COMPLETE",
             }
         )
 

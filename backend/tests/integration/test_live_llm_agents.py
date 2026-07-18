@@ -105,7 +105,8 @@ def test_live_planner_returns_the_mandatory_plan() -> None:
     )
     assert error_type is None
     assert len(plan["steps"]) == 6
-    assert plan["steps"][-1]["stage"] == "human_review"
+    assert plan["steps"][-1]["stage"] == "risk_dossier_generation"
+    assert plan["steps"][3]["stage"] == "legal_enrichment"
 
 
 def test_live_transaction_agent_uses_tool_derived_evidence() -> None:
@@ -272,7 +273,7 @@ def test_live_screening_agent_uses_the_merged_screening_tool() -> None:
     assert output["status"] == "CONFIRMED_MATCH", output["metadata"]
 
 
-def test_live_report_preserves_human_review_safety_fields() -> None:
+def test_live_report_returns_risk_dossier_fields() -> None:
     case_file = {"findings": [], "evidence": [], "screening": {"status": "NO_MATCH"}}
     report = invoke_report(
         build_report_agent(build_chat_model()),
@@ -282,6 +283,15 @@ def test_live_report_preserves_human_review_safety_fields() -> None:
         validation={"status": "PASSED"},
         workflow_error=None,
     )
-    assert report["recommended_action"] == "HUMAN_REVIEW_REQUIRED"
-    assert report["automated_compliance_decision"] is False
+    assert report["case_id"] == "CASE-LIVE-REPORT"
+    assert report["title"]
+    assert report["summary"]
+    assert report["overall_risk_level"] in {
+        "LOW",
+        "MEDIUM",
+        "HIGH",
+        "CRITICAL",
+        "INCONCLUSIVE",
+    }
+    assert "recommended_action" not in report
     assert report["workflow_error"] is None

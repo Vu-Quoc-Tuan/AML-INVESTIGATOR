@@ -15,6 +15,9 @@ def test_planner_prompt_exposes_the_exact_mandatory_stage_order() -> None:
         assert f"{position}. {stage}" in PLANNER_PROMPT
 
     assert "Do not repeat, omit, rename, or add any stage." in PLANNER_PROMPT
+    assert "legal_enrichment" in PLANNER_PROMPT
+    assert "risk_dossier_generation" in PLANNER_PROMPT
+    assert "report_generation" not in PLANNER_PROMPT
 
 
 def test_context_builders_exclude_unrelated_state_and_secrets() -> None:
@@ -25,7 +28,6 @@ def test_context_builders_exclude_unrelated_state_and_secrets() -> None:
         "evidence_validation": {"status": "PASSED"},
         "workflow_error": "safe error",
         "api_key": "must-not-leak",
-        "human_review": {"reviewer": "private"},
         "messages": ["private agent message"],
         "model": "private model object",
     }
@@ -36,6 +38,7 @@ def test_context_builders_exclude_unrelated_state_and_secrets() -> None:
     assert set(report_payload) == {
         "case_id",
         "case_file",
+        "behavior_mapping",
         "evidence_validation",
         "workflow_error",
         "errors",

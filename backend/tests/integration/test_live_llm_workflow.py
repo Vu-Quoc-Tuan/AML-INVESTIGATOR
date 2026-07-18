@@ -1,11 +1,11 @@
-"""Live full-workflow verification through Human Review."""
+"""Live full-workflow verification for the automatic multi-agent pipeline."""
 
 import pytest
 from langchain_core.tools import tool
-from langgraph.types import Command
 
 from app.investigation_orchestrator import ToolRegistry, build_workflow, initial_state
 from app.investigation_orchestrator.tool_registry import ToolResult
+from app.legal_rag.hybrid_retriever import StaticLegalRetriever
 
 
 pytestmark = pytest.mark.live_llm
@@ -67,12 +67,14 @@ def screen_internal_watchlist(case_id: str) -> dict:
     ).model_dump()
 
 
-def test_live_workflow_interrupts_and_resumes_with_tool_provenance() -> None:
+def test_live_workflow_completes_automatically_with_tool_provenance() -> None:
     registry = ToolRegistry()
     registry.register("transaction", [get_account_transactions])
     registry.register("kyc", [get_kyc_documents])
     registry.register("screening", [screen_internal_watchlist])
-    graph = build_workflow(tool_registry=registry)
+    graph = build_workflow(
+        tool_registry=registry, legal_retriever=StaticLegalRetriever()
+    )
     config = {"configurable": {"thread_id": "live-full-workflow"}}
 
     result = graph.invoke(
@@ -83,28 +85,19 @@ def test_live_workflow_interrupts_and_resumes_with_tool_provenance() -> None:
         config,
     )
 
-    assert "__interrupt__" in result
-    state = graph.get_state(config).values
-    evidence_ids = {item["evidence_id"] for item in state["case_file"]["evidence"]}
+    assert "__interrupt__" not in result
+    evidence_ids = {item["evidence_id"] for item in result["case_file"]["evidence"]}
     assert {
         "E-WORKFLOW-TX",
         "E-WORKFLOW-KYC",
         "E-WORKFLOW-SCREEN",
-    } <= evidence_ids, state.get("agent_outputs", {}).get("screening", {}).get(
+    } <= evidence_ids, result.get("agent_outputs", {}).get("screening", {}).get(
         "metadata", {}
     )
-    assert "messages" not in state
-    assert state["report"]["automated_compliance_decision"] is False
-    assert state["report"]["workflow_error"] is None
-
-    completed = graph.invoke(
-        Command(
-            resume={
-                "decision": "APPROVED",
-                "reviewer": "live-test-reviewer",
-                "comments": "Live workflow verified",
-            }
-        ),
-        config,
-    )
-    assert completed["case_status"] == "APPROVED"
+    assert "messages" not in result
+    assert "recommended_action" not in result["report"]
+    assert result["report"]["workflow_error"] is None
+    assert result["phase"] == "complete"
+    assert "case_status" not in result
+    assert "legal" in result["agent_outputs"]
+    assert result["behavior_mapping"]["rag_queries"]

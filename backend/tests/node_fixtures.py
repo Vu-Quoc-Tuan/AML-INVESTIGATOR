@@ -8,6 +8,7 @@ from langgraph.types import Command
 
 from app.investigation_orchestrator.agent_schemas import MANDATORY_STAGES
 from app.investigation_orchestrator.state import InvestigationState
+from app.legal_rag.hybrid_retriever import StaticLegalRetriever
 
 
 def planner_node(state: InvestigationState) -> Command[Literal["supervisor"]]:
@@ -158,19 +159,73 @@ def screening_node(state: InvestigationState) -> Command[Literal["supervisor"]]:
     )
 
 
+def behavior_mapper_node(state: InvestigationState) -> Command[Literal["supervisor"]]:
+    case_id = state["case_id"]
+    findings = list((state.get("case_file") or {}).get("findings") or [])
+    linked = [
+        str(item.get("finding_id"))
+        for item in findings
+        if isinstance(item, dict) and item.get("finding_id")
+    ]
+    return Command(
+        update={
+            "behavior_mapping": {
+                "behavior_summary": (
+                    f"Deterministic behavior frame for {case_id}: rapid pass-through "
+                    "and related scout findings."
+                ),
+                "rag_queries": [
+                    {
+                        "query_id": "RQ-TEST-1",
+                        "query_text": (
+                            "Hành vi chuyển tiền qua trung gian nhanh và hợp pháp hóa "
+                            "tài sản do phạm tội có thể liên quan tội rửa tiền như thế nào?"
+                        ),
+                        "linked_finding_ids": linked[:5],
+                        "hypothesis_tag": "money_laundering_pass_through",
+                    }
+                ],
+                "risk_hypotheses": [
+                    {
+                        "tag": "rapid_pass_through",
+                        "rationale": "Transaction scout reported pass-through pattern",
+                        "confidence": 0.8,
+                    }
+                ],
+            },
+            "handoff_log": [
+                {
+                    "source": "behavior_mapper",
+                    "target": "supervisor",
+                    "reason": "Behavior framed into legal retrieval queries",
+                }
+            ],
+        },
+        goto="supervisor",
+    )
+
+
 def report_node(state: InvestigationState) -> Command[Literal["supervisor"]]:
+    from app.investigation_orchestrator.agents import (
+        _default_risk_level,
+        _legal_mappings_from_case_file,
+    )
+
     case_file = state.get("case_file", {})
+    validation = state.get("evidence_validation", {})
+    legal_mappings = _legal_mappings_from_case_file(case_file)
     report = {
         "case_id": state["case_id"],
         "title": "AML Investigation Dossier (test fixture)",
-        "summary": "Deterministic review dossier",
+        "summary": "Deterministic risk dossier for investigator review",
+        "overall_risk_level": _default_risk_level(case_file, validation),
+        "risk_rationale": "Fixture risk rationale based on validated findings only",
+        "legal_mappings": legal_mappings,
         "findings": case_file.get("findings", []),
         "evidence_count": len(case_file.get("evidence", [])),
-        "screening_status": case_file.get("screening", {}).get("status"),
-        "validation": state.get("evidence_validation", {}),
+        "screening_status": (case_file.get("screening") or {}).get("status"),
+        "validation": validation,
         "workflow_error": state.get("workflow_error"),
-        "recommended_action": "HUMAN_REVIEW_REQUIRED",
-        "automated_compliance_decision": False,
     }
     return Command(
         update={
@@ -179,7 +234,7 @@ def report_node(state: InvestigationState) -> Command[Literal["supervisor"]]:
                 {
                     "source": "report_agent",
                     "target": "supervisor",
-                    "reason": "Test dossier created",
+                    "reason": "Test risk dossier created",
                 }
             ],
         },
@@ -193,5 +248,10 @@ def deterministic_agent_nodes() -> dict:
         "transaction_agent": transaction_node,
         "kyc_agent": kyc_node,
         "screening_agent": screening_node,
+        "behavior_mapper": behavior_mapper_node,
         "report_agent": report_node,
     }
+
+
+def deterministic_legal_retriever() -> StaticLegalRetriever:
+    return StaticLegalRetriever()

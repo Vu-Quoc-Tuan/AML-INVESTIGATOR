@@ -70,7 +70,7 @@ def test_duplicate_production_registration_is_a_configuration_error() -> None:
         register_production_transaction_tools(registry, service=object())
 
 
-def test_composition_root_registers_every_required_owner() -> None:
+def test_composition_root_registers_agent_tool_owners_without_legal() -> None:
     registry = build_production_tool_registry()
 
     registry.require_tools()
@@ -79,3 +79,5 @@ def test_composition_root_registers_every_required_owner() -> None:
     )
     assert {tool.name for tool in registry.tools_for("kyc")} == EXPECTED_KYC_TOOLS
     assert registry.tools_for("screening")
+    # Legal RAG is a deterministic node, not a required tool owner.
+    assert registry.tools_for("legal") == ()

@@ -11,18 +11,20 @@ StageName = Literal[
     "transaction_investigation",
     "kyc_entity_investigation",
     "screening_and_compliance",
+    "legal_enrichment",
     "evidence_validation",
-    "report_generation",
-    "human_review",
+    "risk_dossier_generation",
 ]
 MANDATORY_STAGES: tuple[StageName, ...] = (
     "transaction_investigation",
     "kyc_entity_investigation",
     "screening_and_compliance",
+    "legal_enrichment",
     "evidence_validation",
-    "report_generation",
-    "human_review",
+    "risk_dossier_generation",
 )
+
+RiskLevel = Literal["LOW", "MEDIUM", "HIGH", "CRITICAL", "INCONCLUSIVE"]
 
 
 class StrictModel(BaseModel):
@@ -70,14 +72,47 @@ class ScreeningAnalysisResponse(WorkerAnalysisResponse):
     available: bool = True
 
 
+class RagQuerySpec(StrictModel):
+    query_id: str = Field(min_length=1)
+    query_text: str = Field(min_length=1)
+    linked_finding_ids: list[str] = Field(default_factory=list)
+    hypothesis_tag: str | None = None
+
+
+class RiskHypothesis(StrictModel):
+    tag: str = Field(min_length=1)
+    rationale: str = Field(min_length=1)
+    confidence: float = Field(ge=0, le=1)
+
+
+class BehaviorMappingResponse(StrictModel):
+    """Intermediate mapping from scout findings to legal RAG queries.
+
+    Empty ``rag_queries`` is valid when there are no scout findings to ground
+    legal retrieval (no invented legal enrichment).
+    """
+
+    behavior_summary: str = Field(min_length=1)
+    rag_queries: list[RagQuerySpec] = Field(default_factory=list, max_length=5)
+    risk_hypotheses: list[RiskHypothesis] = Field(default_factory=list)
+
+
+class LegalMappingItem(StrictModel):
+    finding_ids: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(min_length=1)
+    article: str = Field(min_length=1)
+    relevance_note: str = Field(min_length=1)
+
+
 class InvestigationReportResponse(StrictModel):
     case_id: str = Field(min_length=1)
     title: str = Field(min_length=1)
     summary: str = Field(min_length=1)
+    overall_risk_level: RiskLevel = "INCONCLUSIVE"
+    risk_rationale: str = Field(default="", min_length=0)
+    legal_mappings: list[LegalMappingItem] = Field(default_factory=list)
     findings: list[dict[str, Any]] = Field(default_factory=list)
     evidence_count: int = Field(ge=0)
     screening_status: str | None = None
     validation: dict[str, Any] = Field(default_factory=dict)
     workflow_error: str | None = None
-    recommended_action: Literal["HUMAN_REVIEW_REQUIRED"] = "HUMAN_REVIEW_REQUIRED"
-    automated_compliance_decision: Literal[False] = False

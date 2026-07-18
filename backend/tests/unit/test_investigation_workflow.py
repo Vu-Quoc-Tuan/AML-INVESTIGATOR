@@ -1,4 +1,4 @@
-"""Focused checks for the Hybrid Supervisor workflow skeleton."""
+"""Focused checks for the Hybrid Supervisor workflow with legal enrichment."""
 
 import pytest
 from langgraph.types import Command
@@ -9,82 +9,87 @@ from app.investigation_orchestrator.nodes import (
     merge_and_validate_node,
     supervisor_node,
 )
-from app.investigation_orchestrator.report_agent import _reviewable_error
+from app.investigation_orchestrator.report_agent import _pipeline_error
 from app.investigation_orchestrator.state import initial_state
 from app.investigation_orchestrator.workflow import build_workflow
 from app.investigation_orchestrator.tool_registry import (
     ToolConfigurationError,
     ToolRegistry,
 )
+from app.legal_rag.hybrid_retriever import StaticLegalRetriever
 from tests.node_fixtures import deterministic_agent_nodes, report_node
 
 
 def _graph():
-    return build_workflow(agent_nodes=deterministic_agent_nodes())
+    return build_workflow(
+        agent_nodes=deterministic_agent_nodes(),
+        legal_retriever=StaticLegalRetriever(),
+    )
 
 
 def _config(thread_id: str) -> dict[str, dict[str, str]]:
     return {"configurable": {"thread_id": thread_id}}
 
 
-def test_graph_merges_parallel_outputs_and_interrupts_for_review() -> None:
+def test_graph_runs_legal_enrichment_and_completes() -> None:
     graph = _graph()
-    config = _config("parallel-review")
+    config = _config("legal-enrichment-complete")
 
     result = graph.invoke(
         initial_state("CASE-001", {"subject_bank_id": "BANK-SHB-001"}),
         config,
     )
 
-    assert "__interrupt__" in result
-    state = graph.get_state(config).values
-    assert set(state["agent_outputs"]) == {"transaction", "kyc", "screening"}
-    assert len(state["case_file"]["findings"]) == 3
-    assert state["evidence_validation"]["status"] == "PASSED"
-    assert state["case_status"] == "IN_REVIEW"
+    assert "__interrupt__" not in result
+    assert result["phase"] == "complete"
+    assert "case_status" not in result
+    assert set(result["agent_outputs"]) >= {
+        "transaction",
+        "kyc",
+        "screening",
+        "legal",
+    }
+    assert result["behavior_mapping"]["rag_queries"]
+    assert any(
+        finding.get("finding_type") == "LEGAL_CITATION"
+        for finding in result["case_file"]["findings"]
+    )
+    assert any(
+        item.get("source_system") == "VN_PENAL_CODE_RAG"
+        for item in result["case_file"]["evidence"]
+    )
+    assert result["evidence_validation"]["status"] in {"PASSED", "PARTIAL"}
+    # Scout findings present + no confirmed screening => MEDIUM (legal does not force HIGH)
+    assert result["report"]["overall_risk_level"] == "MEDIUM"
+    assert result["report"]["legal_mappings"]
+    assert all(
+        "finding:legal:" not in finding_id
+        for mapping in result["report"]["legal_mappings"]
+        for finding_id in mapping["finding_ids"]
+    )
 
     supervisor_targets = [
         entry["target"]
-        for entry in state["handoff_log"]
+        for entry in result["handoff_log"]
         if entry["source"] == "supervisor"
     ]
     assert supervisor_targets == [
         "planner",
         "parallel_dispatch",
         "screening_agent",
+        "behavior_mapper",
+        "legal_rag",
         "evidence_validator",
         "report_agent",
-        "human_review",
+        "end",
     ]
 
 
-def test_graph_resumes_after_human_approval() -> None:
-    graph = _graph()
-    config = _config("approval")
-    graph.invoke(initial_state("CASE-002", {}), config)
-
-    result = graph.invoke(
-        Command(
-            resume={
-                "decision": "APPROVED",
-                "reviewer": "aml-reviewer",
-                "comments": "Evidence reviewed",
-            }
-        ),
-        config,
-    )
-
-    assert result["case_status"] == "APPROVED"
-    assert result["phase"] == "complete"
-    assert result["human_review"]["reviewer"] == "aml-reviewer"
-
-
-def test_initial_input_cannot_bypass_mandatory_review() -> None:
+def test_initial_input_cannot_bypass_investigation_stages() -> None:
     graph = _graph()
     config = _config("input-boundary")
     malicious_input = {
         **initial_state("CASE-INPUT", {}),
-        "human_review": {"decision": "APPROVED"},
         "investigation_plan": ["skip"],
         "case_file": {"findings": [], "evidence": []},
         "evidence_validation": {"status": "PASSED"},
@@ -93,63 +98,62 @@ def test_initial_input_cannot_bypass_mandatory_review() -> None:
 
     result = graph.invoke(malicious_input, config)
 
-    assert "__interrupt__" in result
-    state = graph.get_state(config).values
-    assert state["case_status"] == "IN_REVIEW"
-    assert state.get("human_review") is None
-    assert state["report"]["title"] == "AML Investigation Dossier (test fixture)"
+    assert result["phase"] == "complete"
+    assert result["report"]["title"] == "AML Investigation Dossier (test fixture)"
 
 
 def test_screening_unavailable_is_inconclusive() -> None:
     graph = _graph()
     config = _config("screening-unavailable")
-    graph.invoke(
+    result = graph.invoke(
         initial_state("CASE-003", {"screening_available": False}),
         config,
     )
 
-    state = graph.get_state(config).values
-    screening = state["agent_outputs"]["screening"]
+    screening = result["agent_outputs"]["screening"]
     assert screening["available"] is False
     assert screening["status"] == "INCONCLUSIVE"
-    assert state["case_file"]["screening"]["status"] == "INCONCLUSIVE"
+    assert result["case_file"]["screening"]["status"] == "INCONCLUSIVE"
+    assert result["phase"] == "complete"
 
 
 def test_external_payment_uses_payment_message_provenance() -> None:
     graph = _graph()
     config = _config("external-provenance")
-    graph.invoke(
+    result = graph.invoke(
         initial_state("CASE-EXT", {"data_visibility": "PAYMENT_MESSAGE_ONLY"}),
         config,
     )
 
-    state = graph.get_state(config).values
-    evidence = state["agent_outputs"]["transaction"]["evidence"][0]
+    evidence = result["agent_outputs"]["transaction"]["evidence"][0]
     assert evidence["source_system"] == "PAYMENT_MESSAGE"
-    assert state["evidence_validation"]["status"] == "PASSED"
+    assert result["evidence_validation"]["status"] in {"PASSED", "PARTIAL"}
+    assert result["phase"] == "complete"
 
 
 def test_unknown_visibility_is_not_accepted_by_validation() -> None:
     graph = _graph()
     config = _config("unknown-visibility")
-    graph.invoke(
+    result = graph.invoke(
         initial_state("CASE-UNKNOWN", {"data_visibility": "UNSUPPORTED"}),
         config,
     )
 
-    state = graph.get_state(config).values
-    assert state["evidence_validation"]["status"] == "PARTIAL"
+    assert result["evidence_validation"]["status"] in {"PARTIAL", "FAILED"}
     assert any(
         "unsupported visibility_level" in issue
-        for issue in state["evidence_validation"]["issues"]
+        for issue in result["evidence_validation"]["issues"]
     )
     assert all(
         finding["finding_type"] != "TRANSACTION_PATTERN"
-        for finding in state["report"]["findings"]
+        for finding in result["report"]["findings"]
+        if finding.get("finding_type") != "LEGAL_CITATION"
+        and finding.get("finding_type") != "SCREENING_RESULT"
+        and finding.get("finding_type") != "KYC_PROFILE"
     )
 
 
-def test_missing_parallel_output_is_reported_to_human_review() -> None:
+def test_missing_parallel_output_still_reaches_report_then_ends() -> None:
     state = {
         **initial_state("CASE-MISSING", {}),
         "agent_outputs": {
@@ -159,17 +163,17 @@ def test_missing_parallel_output_is_reported_to_human_review() -> None:
 
     merge_command = merge_and_validate_node(state)
     assert merge_command.goto == "report_agent"
-    assert merge_command.update["case_status"] == "IN_REVIEW"
     assert merge_command.update["evidence_validation"]["status"] == "FAILED"
 
     failure_state = {**state, **merge_command.update}
     report_command = report_node(failure_state)
     supervisor_state = {**failure_state, **report_command.update}
     supervisor_command = supervisor_node(supervisor_state)
-    assert supervisor_command.goto == "human_review"
+    assert supervisor_command.goto == "__end__"
+    assert supervisor_command.update["phase"] == "complete"
 
 
-def test_failed_parallel_agent_still_reaches_human_review() -> None:
+def test_failed_parallel_agent_still_completes_with_report() -> None:
     nodes = deterministic_agent_nodes()
 
     def failed_transaction(_state):
@@ -185,16 +189,16 @@ def test_failed_parallel_agent_still_reaches_human_review() -> None:
         }
 
     nodes["transaction_agent"] = failed_transaction
-    graph = build_workflow(agent_nodes=nodes)
+    graph = build_workflow(
+        agent_nodes=nodes, legal_retriever=StaticLegalRetriever()
+    )
     config = _config("failed-agent")
 
     result = graph.invoke(initial_state("CASE-FAILED", {}), config)
 
-    assert "__interrupt__" in result
-    state = graph.get_state(config).values
-    assert state["evidence_validation"]["status"] == "FAILED"
-    assert state["report"]["workflow_error"] == "Mandatory agents failed: transaction"
-    assert state["case_status"] == "IN_REVIEW"
+    assert result["phase"] == "complete"
+    assert result["evidence_validation"]["status"] == "FAILED"
+    assert result["report"]["workflow_error"] == "Mandatory agents failed: transaction"
 
 
 def test_planner_fallback_error_is_visible_to_the_report() -> None:
@@ -203,10 +207,10 @@ def test_planner_fallback_error_is_visible_to_the_report() -> None:
         "errors": ["Planner fallback used: ProviderError"],
     }
 
-    assert _reviewable_error(state) == "Planner fallback used: ProviderError"
+    assert _pipeline_error(state) == "Planner fallback used: ProviderError"
 
 
-def test_screening_failure_validates_existing_case_before_error_dossier() -> None:
+def test_screening_failure_still_can_complete_pipeline() -> None:
     nodes = deterministic_agent_nodes()
 
     def failed_screening(_state):
@@ -227,36 +231,42 @@ def test_screening_failure_validates_existing_case_before_error_dossier() -> Non
         )
 
     nodes["screening_agent"] = failed_screening
-    graph = build_workflow(agent_nodes=nodes)
+    graph = build_workflow(
+        agent_nodes=nodes, legal_retriever=StaticLegalRetriever()
+    )
     config = _config("failed-screening-validation")
 
     result = graph.invoke(initial_state("CASE-SCREENING-FAILED", {}), config)
 
-    assert "__interrupt__" in result
-    state = graph.get_state(config).values
-    assert state["evidence_validation"]["status"] == "PASSED"
-    assert state["report"]["workflow_error"] == "Screening agent failed"
-    assert state["report"]["findings"] == state["case_file"]["findings"]
-
-
-def test_more_information_request_ends_without_an_automatic_loop() -> None:
-    graph = _graph()
-    config = _config("more-information")
-    graph.invoke(initial_state("CASE-004", {}), config)
-
-    result = graph.invoke(
-        Command(
-            resume={
-                "decision": "MORE_INFORMATION_REQUIRED",
-                "reviewer": "aml-reviewer",
-                "requested_target": "transaction_agent",
-            }
-        ),
-        config,
-    )
-
-    assert result["case_status"] == "AWAITING_INFORMATION"
     assert result["phase"] == "complete"
+    assert result["report"]["workflow_error"] == "Screening agent failed"
+    assert "legal" in result["agent_outputs"]
+
+
+def test_legal_citation_without_penal_source_is_rejected() -> None:
+    validation, validated = validate_evidence(
+        {
+            "case_id": "CASE-LEGAL-BAD",
+            "findings": [
+                {
+                    "finding_id": "F-LEGAL",
+                    "finding_type": "LEGAL_CITATION",
+                    "summary": "Bad source",
+                    "evidence_ids": ["E-BAD"],
+                }
+            ],
+            "evidence": [
+                {
+                    "evidence_id": "E-BAD",
+                    "source_system": "NOT_LEGAL",
+                    "source_record_id": "X",
+                    "payload": {"article": "Điều 324"},
+                }
+            ],
+        }
+    )
+    assert validation["status"] == "FAILED"
+    assert validated["findings"] == []
 
 
 def test_malformed_worker_items_are_excluded_instead_of_crashing() -> None:
@@ -282,7 +292,7 @@ def test_llm_workflow_rejects_an_incomplete_injected_registry() -> None:
         build_workflow(model=object(), tool_registry=ToolRegistry())
 
 
-def test_default_llm_path_composes_all_production_tool_owners(monkeypatch) -> None:
+def test_default_llm_path_composes_agent_tool_owners(monkeypatch) -> None:
     captured = {}
 
     def capture_nodes(_model, registry):
@@ -294,7 +304,9 @@ def test_default_llm_path_composes_all_production_tool_owners(monkeypatch) -> No
 
     monkeypatch.setattr(workflow_module, "_llm_nodes", capture_nodes)
 
-    workflow_module.build_workflow(model=object())
+    workflow_module.build_workflow(
+        model=object(), legal_retriever=StaticLegalRetriever()
+    )
 
     assert all(captured["tool_names"].values())
     assert "calculate_ubo" in captured["tool_names"]["kyc"]

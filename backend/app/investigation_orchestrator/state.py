@@ -11,20 +11,11 @@ WorkflowPhase = Literal[
     "parallel_investigation",
     "merged",
     "screening",
+    "legal_enrichment",
     "evidence_validation",
     "reporting",
-    "human_review",
     "complete",
 ]
-CaseStatus = Literal[
-    "OPEN",
-    "IN_REVIEW",
-    "APPROVED",
-    "REJECTED",
-    "AWAITING_INFORMATION",
-    "FAILED",
-]
-ReviewDecision = Literal["APPROVED", "REJECTED", "MORE_INFORMATION_REQUIRED"]
 
 
 def merge_dicts(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
@@ -72,13 +63,6 @@ class HandoffRecord(TypedDict):
     reason: str
 
 
-class ReviewResult(TypedDict, total=False):
-    decision: ReviewDecision
-    reviewer: str
-    comments: str
-    requested_target: str
-
-
 class InvestigationInput(TypedDict):
     case_id: str
     alert: dict[str, Any]
@@ -86,13 +70,12 @@ class InvestigationInput(TypedDict):
 
 class InvestigationState(InvestigationInput, total=False):
     phase: WorkflowPhase
-    case_status: CaseStatus
     investigation_plan: dict[str, Any]
     agent_outputs: Annotated[dict[str, AgentOutput], merge_dicts]
     case_file: dict[str, Any]
+    behavior_mapping: dict[str, Any]
     evidence_validation: dict[str, Any]
     report: dict[str, Any]
-    human_review: ReviewResult
     workflow_error: str
     handoff_log: Annotated[list[HandoffRecord], append_lists]
     errors: Annotated[list[str], append_lists]
