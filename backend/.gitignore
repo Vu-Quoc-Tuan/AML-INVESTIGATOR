@@ -7,4 +7,6 @@ data/generated_smoke/
 *.egg-info/
 dist/
 build/
-backend/.env
+.env
+.env.*
+!.env.example
