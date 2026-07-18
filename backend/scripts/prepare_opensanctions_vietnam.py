@@ -8,8 +8,10 @@ import csv
 import hashlib
 import json
 import logging
+import math
 import os
 import tempfile
+import unicodedata
 from collections.abc import Iterable, Iterator, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +24,9 @@ PEPS_URL = (
 )
 USER_AGENT = "aml-investigator-opensanctions-prep/1.0"
 COUNTRY_CODE = "vn"
+INJECTION_PERCENT_ENV = "PEP_CUSTOMER_INJECTION_PERCENT"
+DEFAULT_CUSTOMERS_FILE = Path("backend/data/generated/customers.csv")
+DEFAULT_ENV_FILE = Path("backend/.env")
 
 COMMON_COLUMNS = (
     "id",
@@ -29,14 +34,18 @@ COMMON_COLUMNS = (
     "aliases",
     "birth_date",
     "countries",
-    "addresses",
-    "identifiers",
-    "phones",
-    "emails",
-    "source_datasets",
-    "first_seen",
-    "last_seen",
-    "last_change",
+    "source_name",
+    "related_entity_id",
+)
+
+NAME_NORMALIZATION_VERSION = "v1"
+SPECIAL_LATIN_TRANSLATION = str.maketrans(
+    {
+        "Đ": "D",
+        "đ": "d",
+        "Ð": "D",
+        "ð": "d",
+    }
 )
 
 
@@ -101,6 +110,122 @@ def split_values(value: object) -> list[str]:
     return [item.strip() for item in str(value).split(";") if item.strip()]
 
 
+def read_env_value(path: Path, key: str) -> str | None:
+    """Read one simple KEY=VALUE entry without adding a dotenv dependency."""
+
+    if not path.is_file():
+        return None
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        candidate, value = line.split("=", 1)
+        if candidate.strip() == key:
+            return value.strip().strip("\"'")
+    return None
+
+
+def resolve_injection_percent(
+    env_file: Path,
+    explicit_percent: float | None = None,
+) -> float:
+    """Resolve CLI, process environment and .env injection configuration."""
+
+    raw_value: object = explicit_percent
+    if raw_value is None:
+        raw_value = os.environ.get(INJECTION_PERCENT_ENV)
+    if raw_value is None:
+        raw_value = read_env_value(env_file, INJECTION_PERCENT_ENV)
+    if raw_value is None:
+        raw_value = 0
+    try:
+        percent = float(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{INJECTION_PERCENT_ENV} must be a number between 0 and 100"
+        ) from exc
+    if not math.isfinite(percent) or not 0 <= percent <= 100:
+        raise ValueError(
+            f"{INJECTION_PERCENT_ENV} must be between 0 and 100"
+        )
+    return percent
+
+
+def remove_latin_diacritics(value: str) -> str:
+    """Remove Latin diacritics without transliterating unrelated scripts."""
+
+    translated = unicodedata.normalize("NFC", value.translate(SPECIAL_LATIN_TRANSLATION))
+    result: list[str] = []
+    previous_base_was_latin = False
+    for character in translated:
+        if unicodedata.combining(character):
+            if not previous_base_was_latin:
+                result.append(character)
+            continue
+        if "LATIN" not in unicodedata.name(character, ""):
+            result.append(character)
+            previous_base_was_latin = False
+            continue
+        result.extend(
+            item
+            for item in unicodedata.normalize("NFKD", character)
+            if not unicodedata.combining(item)
+        )
+        previous_base_was_latin = True
+    return "".join(result)
+
+
+def title_case_name(value: str) -> str:
+    """Capitalize each punctuation-delimited name component deterministically."""
+
+    collapsed = " ".join(value.split()).lower()
+    output: list[str] = []
+    capitalize_next = True
+    for character in collapsed:
+        if character.isalpha():
+            output.append(character.upper() if capitalize_next else character)
+            capitalize_next = False
+        else:
+            output.append(character)
+            capitalize_next = not character.isdigit()
+    return "".join(output)
+
+
+def normalize_person_name(value: object) -> str:
+    """Return a trimmed, accent-free display name in component title case."""
+
+    if value is None:
+        return ""
+    return title_case_name(remove_latin_diacritics(str(value).strip()))
+
+
+def normalize_aliases(value: object, canonical_name: str) -> str:
+    """Normalize, de-duplicate and serialize aliases in source order."""
+
+    aliases: list[str] = []
+    seen: set[str] = {canonical_name}
+    for item in split_values(value):
+        normalized = normalize_person_name(item)
+        if normalized and normalized not in seen:
+            aliases.append(normalized)
+            seen.add(normalized)
+    return ";".join(aliases)
+
+
+def normalization_quality(rows: Iterable[Mapping[str, str]]) -> dict[str, int]:
+    """Summarize deterministic output-quality counters for the manifest."""
+
+    materialized = list(rows)
+    return {
+        "rows": len(materialized),
+        "canonical_names_with_non_ascii": sum(
+            any(ord(character) > 127 for character in row["name"])
+            for row in materialized
+        ),
+        "empty_normalized_names": sum(not row["name"] for row in materialized),
+    }
+
+
 def has_country(value: object, country_code: str = COUNTRY_CODE) -> bool:
     return country_code in {item.lower() for item in split_values(value)}
 
@@ -114,7 +239,12 @@ def write_csv(path: Path, columns: tuple[str, ...], rows: Iterable[Mapping[str, 
     )
     try:
         with os.fdopen(file_descriptor, "w", encoding="utf-8", newline="") as output:
-            writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore")
+            writer = csv.DictWriter(
+                output,
+                fieldnames=columns,
+                extrasaction="ignore",
+                lineterminator="\n",
+            )
             writer.writeheader()
             for row in rows:
                 writer.writerow(row)
@@ -142,21 +272,68 @@ def simple_person_rows(source: Path) -> Iterator[dict[str, str]]:
             ):
                 continue
             seen_ids.add(entity_id)
+            normalized_name = normalize_person_name(name)
+            if not normalized_name:
+                raise ValueError(
+                    f"PEP record {entity_id!r} has an empty normalized name"
+                )
+            aliases_original = str(row.get("aliases", "") or "").strip()
             yield {
                 "id": entity_id,
-                "name": name,
-                "aliases": row.get("aliases", ""),
+                "name": normalized_name,
+                "aliases": normalize_aliases(aliases_original, normalized_name),
                 "birth_date": row.get("birth_date", ""),
                 "countries": row.get("countries", ""),
-                "addresses": row.get("addresses", ""),
-                "identifiers": row.get("identifiers", ""),
-                "phones": row.get("phones", ""),
-                "emails": row.get("emails", ""),
-                "source_datasets": row.get("dataset", ""),
-                "first_seen": row.get("first_seen", ""),
-                "last_seen": row.get("last_seen", ""),
-                "last_change": row.get("last_change", ""),
+                "source_name": "OPEN_SANCTIONS_PEP",
+                "related_entity_id": "",
             }
+
+
+def injected_customer_rows(
+    customers_file: Path,
+    percent: float,
+) -> tuple[list[dict[str, str]], int]:
+    """Select an exact deterministic percentage of customers as synthetic PEPs."""
+
+    with customers_file.open("r", encoding="utf-8", newline="") as input_file:
+        customers = list(csv.DictReader(input_file))
+    required = {"customer_id", "full_name", "date_of_birth", "nationality"}
+    missing = required - set(customers[0] if customers else [])
+    if missing:
+        raise ValueError(
+            "customers CSV is missing required columns: "
+            + ", ".join(sorted(missing))
+        )
+
+    injection_count = int(len(customers) * percent / 100 + 0.5)
+    ranked = sorted(
+        customers,
+        key=lambda row: (
+            hashlib.sha256(str(row["customer_id"]).encode("utf-8")).hexdigest(),
+            str(row["customer_id"]),
+        ),
+    )
+    selected = sorted(
+        ranked[:injection_count], key=lambda row: str(row["customer_id"])
+    )
+    rows: list[dict[str, str]] = []
+    for customer in selected:
+        customer_id = str(customer["customer_id"]).strip()
+        name = normalize_person_name(customer["full_name"])
+        if not customer_id or not name:
+            raise ValueError("selected customer has an empty ID or normalized name")
+        rows.append(
+            {
+                "id": f"SYNTH-PEP-{customer_id}",
+                "name": name,
+                "aliases": "",
+                "birth_date": str(customer.get("date_of_birth", "") or ""),
+                "countries": str(customer.get("nationality", "") or "").lower(),
+                "source_name": "SYNTHETIC_CUSTOMER_INJECTION",
+                "related_entity_id": customer_id,
+            }
+        )
+    return rows, len(customers)
 
 
 def resource(index: Mapping[str, object], name: str) -> Mapping[str, object]:
@@ -176,6 +353,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--raw-dir", type=Path, default=Path("backend/data/opensanctions/raw"))
     parser.add_argument(
         "--output-dir", type=Path, default=Path("backend/data/opensanctions/processed")
+    )
+    parser.add_argument("--customers-file", type=Path, default=DEFAULT_CUSTOMERS_FILE)
+    parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_FILE)
+    parser.add_argument(
+        "--injection-percent",
+        type=float,
+        help=f"Override {INJECTION_PERCENT_ENV} from the process environment/.env.",
     )
     parser.add_argument("--skip-download", action="store_true")
     return parser.parse_args()
@@ -207,13 +391,54 @@ def main() -> None:
             raise ValueError("PEP raw file checksum does not match --peps-sha1")
 
     vietnam_people_path = args.output_dir / "vietnam_persons.csv"
-    person_count = write_csv(vietnam_people_path, COMMON_COLUMNS, simple_person_rows(peps_file))
+    real_pep_rows = list(simple_person_rows(peps_file))
+    injection_percent = resolve_injection_percent(
+        args.env_file, args.injection_percent
+    )
+    injected_rows, eligible_customer_rows = injected_customer_rows(
+        args.customers_file, injection_percent
+    )
+    person_rows = [*real_pep_rows, *injected_rows]
+    ids = [row["id"] for row in person_rows]
+    if len(ids) != len(set(ids)):
+        raise ValueError("combined PEP output contains duplicate IDs")
+    quality = normalization_quality(person_rows)
+    if quality["empty_normalized_names"]:
+        raise ValueError("normalized PEP output contains empty canonical names")
+    person_count = write_csv(vietnam_people_path, COMMON_COLUMNS, person_rows)
 
     manifest = {
         "generated_at": datetime.now(UTC).isoformat(),
         "country_filter": COUNTRY_CODE,
         "outputs": {
-            vietnam_people_path.name: {"rows": person_count, "source": peps_resource["url"]},
+            vietnam_people_path.name: {
+                "rows": person_count,
+                "real_pep_rows": len(real_pep_rows),
+                "injected_customer_rows": len(injected_rows),
+                "source": peps_resource["url"],
+            },
+        },
+        "normalization": {
+            "version": NAME_NORMALIZATION_VERSION,
+            "unicode_form": "NFKD",
+            "special_character_map": {
+                "Đ": "D",
+                "đ": "d",
+                "Ð": "D",
+                "ð": "d",
+            },
+            "capitalization": "name_component_title_case",
+            "normalized_columns": ["name", "aliases"],
+            "quality": quality,
+        },
+        "customer_injection": {
+            "environment_variable": INJECTION_PERCENT_ENV,
+            "percent": injection_percent,
+            "customers_file": str(args.customers_file),
+            "eligible_customer_rows": eligible_customer_rows,
+            "injected_rows": len(injected_rows),
+            "selection": "sha256(customer_id), exact rounded count",
+            "source_name": "SYNTHETIC_CUSTOMER_INJECTION",
         },
         "sources": {
             "peps": {
