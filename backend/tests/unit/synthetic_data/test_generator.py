@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
+from collections import Counter
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -29,6 +32,7 @@ def small_world(tmp_path_factory):
         n_customers=80,
         n_companies=12,
         n_transactions=1200,
+        n_external_accounts=500,
         min_accounts=100,
         max_accounts=220,
         output_dir=out,
@@ -42,8 +46,47 @@ def test_exact_quotas(small_world):
     world, _ = small_world
     assert len(world.customers) == 80
     assert len(world.companies) == 12
-    total_accounts = len(world.accounts) + len(world.demo_accounts)
+    total_accounts = len(world.accounts)
     assert 100 <= total_accounts <= 220
+
+
+def test_shb_boundary_models(small_world):
+    world, _ = small_world
+    assert world.config.home_bank_id == "BANK-SHB-001"
+    assert len(world.external_accounts) == world.config.n_external_accounts
+    assert all(
+        account.bank_id == world.config.home_bank_id
+        for account in world.accounts.values()
+    )
+    assert not (set(world.external_accounts) & set(world.balances))
+    assert all(
+        account.external_account_id.startswith("EXT-ACC-")
+        for account in world.external_accounts.values()
+    )
+
+
+def test_invalid_external_count_rejected():
+    with pytest.raises(ValueError, match="n_external_accounts"):
+        GeneratorConfig(n_external_accounts=499).validate()
+
+
+def test_single_normal_transaction_uses_consistent_quota_rounding(tmp_path):
+    config = GeneratorConfig(
+        random_seed=3,
+        n_customers=20,
+        n_companies=5,
+        n_transactions=1,
+        n_external_accounts=500,
+        min_accounts=25,
+        max_accounts=60,
+        n_suspicious_scenarios=0,
+        n_lookalike_scenarios=0,
+        inject_incomplete_evidence=False,
+        output_dir=tmp_path,
+    )
+    world = generate_world(config, write=False)
+    transaction = world.transactions[next(iter(world.normal_transaction_ids))]
+    assert transaction.direction.value == "INTERNAL"
 
 
 def test_validation_passes(small_world):
@@ -73,7 +116,7 @@ def test_no_negative_balance_without_overdraft(small_world):
 
 def test_no_system_float(small_world):
     world, _ = small_world
-    assert "ACCT-SYSTEM-FLOAT-001" not in world.demo_accounts
+    assert "ACCT-SYSTEM-FLOAT-001" not in world.external_accounts
     assert "ACCT-SYSTEM-FLOAT-001" not in world.accounts
     assert all("SYSTEM-FLOAT" not in t.description for t in world.transactions.values())
 
@@ -87,25 +130,79 @@ def test_banks_catalog_exported(small_world):
     assert "risk_score" in text
 
 
+def test_single_home_bank_and_external_directory(small_world):
+    world, _ = small_world
+    home = [bank for bank in world.banks.values() if bank.is_home_bank]
+    assert [bank.bank_id for bank in home] == ["BANK-SHB-001"]
+    assert all(account.bank_id == "BANK-SHB-001" for account in world.accounts.values())
+    assert all(
+        account.bank_id != "BANK-SHB-001"
+        for account in world.external_accounts.values()
+    )
+
+
+def test_external_accounts_have_no_internal_artifacts(small_world):
+    world, _ = small_world
+    external_ids = set(world.external_accounts)
+    assert not (external_ids & set(world.entity_accounts))
+    assert not (external_ids & set(world.entity_devices))
+    assert not (external_ids & set(world.entity_ips))
+    assert not (external_ids & set(world.balances))
+    assert all(
+        profile.entity_id not in external_ids
+        for profile in world.kyc_profiles.values()
+    )
+
+
 def test_bank_account_and_transaction_fks_resolve(small_world):
     world, out = small_world
-    bank_entity_ids = {bank.bank_entity_id for bank in world.banks.values()}
     bank_ids = set(world.banks)
-    all_accounts = {**world.accounts, **world.demo_accounts}
+    all_accounts = {**world.accounts, **world.external_accounts}
 
-    assert len(bank_entity_ids) == len(world.banks)
     assert "bank_id" in ACCOUNT_FEATURE_COLUMNS
     assert "bank_id" in (out / "accounts.csv").read_text(encoding="utf-8").splitlines()[0]
-    assert "bank_entity_id" in (out / "banks.csv").read_text(encoding="utf-8").splitlines()[0]
+    assert "is_home_bank" in (out / "banks.csv").read_text(encoding="utf-8").splitlines()[0]
 
-    for account in all_accounts.values():
+    for account in world.accounts.values():
         assert account.bank_id in bank_ids
-        if account.owner_entity_type.value == "BANK":
-            assert account.owner_entity_id in bank_entity_ids
+        assert account.owner_entity_id in world.customers or account.owner_entity_id in world.companies
 
     for txn in world.transactions.values():
-        assert txn.source_bank_id == all_accounts[txn.source_account_id].bank_id
-        assert txn.destination_bank_id == all_accounts[txn.destination_account_id].bank_id
+        assert txn.source_bank_id == all_accounts[txn.source_account_ref].bank_id
+        assert txn.destination_bank_id == all_accounts[txn.destination_account_ref].bank_id
+
+
+def test_transaction_topologies_and_visibility(small_world):
+    world, _ = small_world
+    allowed = {
+        ("INTERNAL_SHB", "INTERNAL_SHB", "INTERNAL"),
+        ("EXTERNAL", "INTERNAL_SHB", "INBOUND"),
+        ("INTERNAL_SHB", "EXTERNAL", "OUTBOUND"),
+    }
+    assert {
+        (
+            transaction.source_account_type.value,
+            transaction.destination_account_type.value,
+            transaction.direction.value,
+        )
+        for transaction in world.transactions.values()
+    } <= allowed
+    for transaction in world.transactions.values():
+        if transaction.direction.value == "INBOUND":
+            assert transaction.source_ip is None
+            assert transaction.device_id is None
+        if transaction.direction.value == "INTERNAL":
+            assert transaction.data_visibility.value == "FULL_INTERNAL"
+
+
+def test_exact_normal_direction_quotas(small_world):
+    world, _ = small_world
+    normal = [world.transactions[transaction_id] for transaction_id in world.normal_transaction_ids]
+    assert Counter(transaction.direction.value for transaction in normal) == {
+        "INTERNAL": 540,
+        "INBOUND": 330,
+        "OUTBOUND": 330,
+    }
 
 
 def test_normal_cross_border_uses_normal_foreign_counterparties(small_world):
@@ -234,6 +331,136 @@ def test_rapid_fan_in_scenario_present(small_world):
     assert "INCOMPLETE_EVIDENCE_PASS_THROUGH" in keys
 
 
+def test_hybrid_rapid_fan_in(small_world):
+    world, _ = small_world
+    scenario = next(
+        item
+        for item in world.scenarios.values()
+        if item.notes["scenario_key"] == "RAPID_FAN_IN_PASS_THROUGH"
+    )
+    assert len(scenario.internal_account_ids) == 7
+    assert len(scenario.external_account_ids) == 6
+    fan_in = [
+        world.transactions[transaction_id]
+        for transaction_id in scenario.suspicious_transaction_ids
+        if world.transactions[transaction_id].purpose_code == "FAN_IN"
+    ]
+    assert sum(
+        transaction.source_account_type.value == "INTERNAL_SHB"
+        for transaction in fan_in
+    ) == 6
+    assert sum(
+        transaction.source_account_type.value == "EXTERNAL"
+        for transaction in fan_in
+    ) == 4
+    assert max(item.occurred_at for item in fan_in) - min(
+        item.occurred_at for item in fan_in
+    ) <= timedelta(minutes=5)
+    outbound = next(
+        world.transactions[transaction_id]
+        for transaction_id in scenario.suspicious_transaction_ids
+        if world.transactions[transaction_id].purpose_code == "PASS_THROUGH"
+    )
+    assert outbound.occurred_at - max(
+        item.occurred_at for item in fan_in
+    ) == timedelta(seconds=121)
+    assert outbound.amount == int(sum(item.amount for item in fan_in) * 0.992)
+
+
+def test_rapid_fan_in_company_has_full_verified_kyc_and_ubo(small_world):
+    world, _ = small_world
+    scenario = next(
+        item
+        for item in world.scenarios.values()
+        if item.notes["scenario_key"] == "RAPID_FAN_IN_PASS_THROUGH"
+    )
+    company_account = next(
+        world.accounts[account_id]
+        for account_id in scenario.internal_account_ids
+        if world.accounts[account_id].owner_entity_type.value == "COMPANY"
+    )
+    company_id = company_account.owner_entity_id
+    assert any(
+        profile.entity_id == company_id
+        for profile in world.kyc_profiles.values()
+    )
+    company_documents = [
+        document
+        for document in world.kyc_documents.values()
+        if document.entity_id == company_id
+    ]
+    for required_type in ("BUSINESS_LICENSE", "UBO_DECLARATION"):
+        matching = [
+            document
+            for document in company_documents
+            if document.document_type == required_type
+        ]
+        assert matching
+        assert any(
+            document.verification_status.value == "VERIFIED"
+            for document in matching
+        )
+    ownerships = [
+        ownership
+        for ownership in world.ownerships.values()
+        if ownership.owned_company_id == company_id
+    ]
+    assert ownerships
+    assert round(sum(item.ownership_percentage for item in ownerships), 2) == 100.0
+    assert all(
+        item.verified
+        and item.source_document_id in world.kyc_documents
+        for item in ownerships
+    )
+    assert not any(
+        relationship.target_entity_id == company_id
+        and relationship.relationship_type == "UNRESOLVED_UBO_CHAIN"
+        for relationship in world.relationships.values()
+    )
+    assert any(
+        company_account.account_id
+        in (transaction.source_account_ref, transaction.destination_account_ref)
+        and transaction.transaction_id not in scenario.suspicious_transaction_ids
+        for transaction in world.transactions.values()
+    )
+
+
+def test_ground_truth_visibility_isolated(small_world):
+    world, _ = small_world
+    assert all(scenario.observable_internal_facts for scenario in world.scenarios.values())
+    forbidden = {
+        "observable_internal_facts",
+        "observable_external_facts",
+        "hidden_world_facts",
+    }
+    assert not (forbidden & set(TRANSACTION_FEATURE_COLUMNS))
+
+
+def test_shb_centric_files_and_manifest(small_world):
+    world, out = small_world
+    external_header = (out / "external_accounts.csv").read_text().splitlines()[0]
+    transaction_header = (out / "transactions.csv").read_text().splitlines()[0]
+    assert "external_account_id" in external_header
+    assert "source_account_type" in transaction_header
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert manifest["counts"]["external_accounts"] == len(world.external_accounts)
+    assert "external_accounts.csv" in manifest["checksums_sha256"]
+
+
+def test_all_external_seen_bounds_match_transactions(small_world):
+    world, _ = small_world
+    for external in world.external_accounts.values():
+        observed = [
+            transaction.occurred_at
+            for transaction in world.transactions.values()
+            if external.external_account_id
+            in (transaction.source_account_ref, transaction.destination_account_ref)
+        ]
+        assert observed, external.external_account_id
+        assert external.first_seen_at == min(observed)
+        assert external.last_seen_at == max(observed)
+
+
 def test_incomplete_evidence_not_no_match(small_world):
     world, _ = small_world
     for sc in world.scenarios.values():
@@ -298,6 +525,7 @@ def test_seed_reproducibility(tmp_path):
         "customers.csv",
         "companies.csv",
         "accounts.csv",
+        "external_accounts.csv",
         "transactions.csv",
         "banks.csv",
         "ground_truth_scenarios.json",
