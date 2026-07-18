@@ -14,7 +14,6 @@ import {
   LineChart,
 } from "recharts";
 import {
-  Bell,
   Bot,
   BrainCircuit,
   CheckCircle2,
@@ -40,12 +39,8 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  Background,
-  BackgroundVariant,
-  Edge,
   Handle,
   MarkerType,
-  Node,
   Position,
   ReactFlow,
 } from "@xyflow/react";
@@ -102,14 +97,23 @@ const flowData = [
   { day: "Sun", volume: 21300, flagged: 860 },
 ];
 
-const investigations = [
-  { id: "AML-2408-1182", status: "Pending", account: "US-4830-****-9921", action: "Awaiting planner review" },
-  { id: "AML-2408-1183", status: "Checking", account: "SG-1190-****-0384", action: "Tracing layered transfers" },
-  { id: "AML-2408-1184", status: "Safety", account: "GB-7201-****-5509", action: "Released by KYC match" },
-  { id: "AML-2408-1185", status: "Reject", account: "VN-8812-****-4402", action: "Escalated for manual review" },
-  { id: "AML-2408-1186", status: "Checking", account: "DE-4408-****-7102", action: "Detecting fan-in pattern" },
-  { id: "AML-2408-1187", status: "Pending", account: "US-5510-****-2208", action: "Queued for risk scoring" },
-] as const;
+const investigationSeeds = [
+  { status: "Pending", account: "US-4830-****-9921", message: "Đang chờ Planner Agent rà soát" },
+  { status: "Checking", account: "SG-1190-****-0384", message: "Đang truy vết giao dịch phân lớp" },
+  { status: "Safety", account: "GB-7201-****-5509", message: "Đã giải phóng nhờ khớp KYC" },
+  { status: "Reject", account: "VN-8812-****-4402", message: "Chuyển xử lý thủ công" },
+  { status: "Checking", account: "DE-4408-****-7102", message: "Đang phát hiện mẫu gom tiền" },
+  { status: "Pending", account: "US-5510-****-2208", message: "Đang chờ chấm điểm rủi ro" },
+] satisfies ReadonlyArray<{ status: Status; account: string; message: string }>;
+
+const investigations = Array.from({ length: 48 }, (_, index) => {
+  const seed = investigationSeeds[index % investigationSeeds.length];
+
+  return {
+    ...seed,
+    id: `AML-2408-${1182 + index}`,
+  };
+});
 
 const agents = [
   {
@@ -260,11 +264,11 @@ function StatCard({ item }: { item: (typeof stats)[number] }) {
   );
 }
 
-function PageHeader({ title, subtitle }: { title: string; subtitle: string }) {
+function PageHeader({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <div className="flex flex-col gap-2">
       <h1 className="text-3xl font-semibold tracking-normal text-slate-950">{title}</h1>
-      <p className="max-w-3xl text-base leading-7 text-slate-600">{subtitle}</p>
+      {subtitle && <p className="max-w-3xl text-base leading-7 text-slate-600">{subtitle}</p>}
     </div>
   );
 }
@@ -272,10 +276,7 @@ function PageHeader({ title, subtitle }: { title: string; subtitle: string }) {
 function DashboardPage() {
   return (
     <div className="space-y-8">
-      <PageHeader
-        title="AML-Investigator"
-        subtitle="AI-powered Anti-Money Laundering Investigation Platform"
-      />
+      <PageHeader title="AML-Investigator" />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {stats.map((item) => (
           <StatCard key={item.title} item={item} />
@@ -324,11 +325,21 @@ function DashboardPage() {
 
 function HistoryPage() {
   const [selected, setSelected] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 6;
+  const totalPages = Math.ceil(investigations.length / pageSize);
+  const startIndex = (page - 1) * pageSize;
+  const visibleInvestigations = investigations.slice(startIndex, startIndex + pageSize);
+
+  const goToPage = (nextPage: number) => {
+    setPage(Math.min(Math.max(nextPage, 1), totalPages));
+    setSelected(null);
+  };
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
-        <PageHeader title="Lịch sử đáng ngờ" subtitle="Review suspicious investigations." />
+        <PageHeader title="Lịch sử đáng ngờ" />
         <div className="flex flex-wrap gap-2">
           <div className="flex h-10 min-w-56 items-center gap-2 rounded-xl bg-white px-3 text-sm text-slate-600 ring-1 ring-slate-200">
             <Search className="size-4" />
@@ -348,10 +359,10 @@ function HistoryPage() {
           <span>ID</span>
           <span>Status</span>
           <span>Account Number</span>
-          <span>Action</span>
+          <span>Message</span>
         </div>
         <div className="space-y-2">
-          {investigations.map((row) => (
+          {visibleInvestigations.map((row) => (
             <button
               key={row.id}
               onClick={() => setSelected(row.id)}
@@ -367,7 +378,7 @@ function HistoryPage() {
                 </span>
               </span>
               <span className="text-sm text-slate-700">{row.account}</span>
-              <span className="text-sm text-slate-600">{row.action}</span>
+              <span className="text-sm text-slate-600">{row.message}</span>
             </button>
           ))}
         </div>
@@ -392,12 +403,27 @@ function HistoryPage() {
       )}
 
       <div className="flex items-center justify-between text-sm text-slate-600">
-        <span>Showing 1-6 of 48 cases</span>
+        <span>
+          Showing {startIndex + 1}-{Math.min(startIndex + pageSize, investigations.length)} of {investigations.length} cases
+        </span>
         <div className="flex gap-2">
-          <button className="rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200 transition hover:bg-slate-50">Previous</button>
-          <button className="rounded-xl bg-blue-600 px-3 py-2 font-medium text-white">1</button>
-          <button className="rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200 transition hover:bg-slate-50">2</button>
-          <button className="rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200 transition hover:bg-slate-50">Next</button>
+          <button
+            onClick={() => goToPage(page - 1)}
+            disabled={page === 1}
+            className="rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400 disabled:hover:bg-white"
+          >
+            Previous
+          </button>
+          <span className="rounded-xl bg-blue-600 px-3 py-2 font-medium text-white">
+            {page}
+          </span>
+          <button
+            onClick={() => goToPage(page + 1)}
+            disabled={page === totalPages}
+            className="rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400 disabled:hover:bg-white"
+          >
+            Next
+          </button>
         </div>
       </div>
     </div>
@@ -435,7 +461,7 @@ function AgentNode({ data }: { data: { name: string; status: AgentState; icon: t
 function WorkflowPage() {
   const [selected, setSelected] = useState("Planner Agent");
   const nodeTypes = useMemo(() => ({ agent: AgentNode }), []);
-  const nodes = useMemo<Node[]>(
+  const nodes = useMemo(
     () => [
       { id: "planner", type: "agent", position: { x: 330, y: 20 }, data: { name: "Planner Agent", status: "Thinking", icon: BrainCircuit } },
       { id: "transaction", type: "agent", position: { x: 40, y: 250 }, data: { name: "Transaction Agent", status: "Working", icon: Network } },
@@ -444,7 +470,7 @@ function WorkflowPage() {
     ],
     []
   );
-  const edges = useMemo<Edge[]>(
+  const edges = useMemo(
     () => [
       { id: "p-t", source: "planner", target: "transaction", type: "smoothstep", animated: true, markerEnd: { type: MarkerType.ArrowClosed }, style: { stroke: "#2563EB", strokeWidth: 2 } },
       { id: "p-r", source: "planner", target: "report", type: "smoothstep", animated: true, markerEnd: { type: MarkerType.ArrowClosed }, style: { stroke: "#2563EB", strokeWidth: 2 } },
@@ -455,11 +481,10 @@ function WorkflowPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Luồng Agent" subtitle="Visualize how AI agents collaborate across AML investigations." />
+      <PageHeader title="Luồng Agent" subtitle="Trực quan hóa cách các AI Agent phối hợp trong điều tra AML." />
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
         <section className="h-[560px] overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-slate-200/70">
           <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView proOptions={{ hideAttribution: true }} nodesDraggable={false}>
-            <Background color="#CBD5E1" gap={18} variant={BackgroundVariant.Dots} />
           </ReactFlow>
         </section>
         <section className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70">
@@ -510,7 +535,7 @@ function WorkflowPage() {
 function MonitoringPage() {
   return (
     <div className="space-y-6">
-      <PageHeader title="Agent Monitoring" subtitle="Operational health, resource utilization, and throughput across active AML agents." />
+      <PageHeader title="Agent Monitoring" subtitle="Theo dõi sức khỏe vận hành, mức sử dụng tài nguyên và thông lượng của các AML Agent đang hoạt động." />
       <div className="grid gap-4 lg:grid-cols-2">
         {agents.map((agent) => {
           const Icon = agent.icon;
@@ -582,7 +607,7 @@ function ConfigPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Cấu hình Agent" subtitle="Tune system instructions, model depth, and execution model for investigation agents." />
+      <PageHeader title="Cấu hình Agent" />
       <div className="grid gap-5 xl:grid-cols-[minmax(0,7fr)_minmax(280px,3fr)]">
         <section className="space-y-5">
           <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70">
@@ -696,7 +721,7 @@ export default function Home() {
             })}
           </nav>
 
-          <div className="ml-auto flex items-center gap-2">
+          {/* <div className="ml-auto flex items-center gap-2">
             <div className="hidden h-10 w-64 items-center gap-2 rounded-xl bg-slate-50 px-3 text-sm text-slate-600 ring-1 ring-slate-200 md:flex">
               <Search className="size-4" />
               <input className="w-full bg-transparent outline-none placeholder:text-slate-500" placeholder="Search accounts, cases" />
@@ -707,7 +732,7 @@ export default function Home() {
             <button className="grid size-10 place-items-center rounded-xl bg-blue-100 text-sm font-semibold text-blue-700 ring-1 ring-blue-200" aria-label="User avatar">
               AI
             </button>
-          </div>
+          </div> */}
         </div>
 
         <div className="flex gap-1 overflow-x-auto border-t border-slate-100 px-4 py-2 lg:hidden">
