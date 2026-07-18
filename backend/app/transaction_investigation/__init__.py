@@ -14,6 +14,7 @@ from .pattern_detection import (
 from .graph_builder import build_case_subgraph
 from .graph_metrics import calculate_graph_risk
 from .config import load_config, InvestigationConfig, PatternThresholds
+from .tool_adapter import build_transaction_tools
 
 __all__ = [
     "get_account_transactions",
@@ -32,5 +33,6 @@ __all__ = [
     "calculate_graph_risk",
     "load_config",
     "InvestigationConfig",
-    "PatternThresholds"
+    "PatternThresholds",
+    "build_transaction_tools",
 ]

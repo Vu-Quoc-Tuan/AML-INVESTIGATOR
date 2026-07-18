@@ -13,7 +13,7 @@ Phạm vi gồm lớp adapter LangChain, registry production, fail-fast validati
 - Worker không có tool được biến thành kết quả `INCONCLUSIVE`; hành vi này hữu ích ở cấp hàm phòng thủ nhưng không phù hợp cho startup production.
 - Screening đã có `build_screening_tools()` và adapter trả về contract JSON tương thích `ToolResult`.
 - KYC có facade và các service deterministic, nhưng chưa có adapter `BaseTool` cho LLM. Cơ chế KYC registry cũ từng ghi trực tiếp vào một case store riêng không còn phù hợp với `InvestigationState` hiện tại và không được phục hồi.
-- Sáu file trong `backend/app/transaction_investigation/` hiện đều rỗng. Không có domain implementation hoặc factory production để đăng ký.
+- Sau merge commit `c5d915d`, Transaction đã có domain implementation, service và LangChain wrappers. Tại thời điểm thiết kế, các output schema Transaction trong `app.schemas.tools` bị mất do semantic merge conflict; wrappers trả raw domain dictionaries, chưa tương thích `ToolResult`, và chưa được production registry đăng ký. Chặng Transaction khôi phục các schema và bổ sung adapter mà không thay đổi domain logic.
 - Graph luôn có đủ ba worker Transaction, KYC và Screening, vì vậy cả ba owner là bắt buộc đối với workflow production.
 
 ## 3. Quyết định kiến trúc
@@ -83,11 +83,15 @@ Exception ngoài hierarchy `KycEntityError` được raise lại để LangChain
 
 `calculate_ubo` và `find_ownership_gaps` không nhận `OwnershipGraphResult` từ model. Input LLM chỉ gồm `company_id`, `as_of_date`, `max_depth` và, với UBO, `ownership_threshold`; adapter tự gọi `build_ownership_graph()` rồi mới phân tích. Quy tắc này ngăn model tự tạo ownership edge hoặc evidence ID dù payload đó có vượt qua Pydantic validation.
 
-### 3.5. Transaction dependency
+### 3.5. Transaction adapter
 
-Không tạo placeholder `BaseTool`, kết quả giả hoặc adapter không có domain logic. Người sở hữu Transaction phải cung cấp implementation và `build_transaction_tools()` theo cùng contract. Cho đến khi dependency này tồn tại, production workflow phải raise `ToolConfigurationError` cho owner `transaction`.
+`backend/app/transaction_investigation/tool_adapter.py` cung cấp `build_transaction_tools(service=None)`. Factory chỉ expose bảy capability được liệt kê trong `docs/architecture.md`: `get_account_transactions`, `trace_funds`, `detect_rapid_pass_through`, `detect_fan_in_fan_out`, `find_common_funding_sources`, `find_shared_identifiers`, và `build_case_subgraph`.
 
-Việc thiếu Transaction không chặn phát triển và contract-test riêng adapter KYC/Screening, nhưng chặn tiêu chí hoàn thành tích hợp production đầy đủ.
+Adapter dùng `TransactionDataService` hiện hữu, trả artifact `content_and_artifact` tương thích `ToolResult`, và chuyển mỗi transaction được tool tham chiếu thành evidence với `evidence_id=transaction_id`, `source_system=evidence_source`, `source_record_id=transaction_id`, cùng `visibility_level=data_visibility`. Adapter không thay đổi thuật toán detection và không ghi state.
+
+Output schema Transaction từ parent `dev` được hợp nhất vào `app.schemas.tools` bên cạnh schema KYC; không bên nào bị ghi đè. Các capability Transaction ngoài allowlist tiếp tục là backend API nội bộ và chưa được cấp cho LLM.
+
+Trong chặng Transaction, composition root đăng ký factory Transaction và Screening, đồng thời fail-fast nếu thiếu owner bắt buộc. Default `build_workflow()` chỉ chuyển sang composition root sau khi KYC adapter tồn tại; điều này tránh biến toàn bộ workflow thành lỗi startup trong lúc triển khai theo từng domain.
 
 ## 4. Luồng dữ liệu
 
@@ -144,7 +148,7 @@ Tích hợp chỉ được coi là hoàn tất khi:
 1. Bổ sung validation API và test fail-fast cho `ToolRegistry`.
 2. Xây KYC adapter cùng contract tests mà không thay đổi domain logic.
 3. Xác nhận Screening adapter bằng shared contract tests.
-4. Tích hợp Transaction factory do domain owner cung cấp; không tự viết thay nghiệp vụ Transaction trong chặng này.
+4. Tích hợp Transaction factory bằng adapter mỏng trên domain implementation đã merge; không thay đổi nghiệp vụ Transaction.
 5. Thêm production composition root và chuyển default `build_workflow()` sang registry production.
 6. Chạy verification từ unit đến live full workflow.
 

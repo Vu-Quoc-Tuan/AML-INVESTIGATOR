@@ -27,6 +27,7 @@ from .nodes import (
     supervisor_node,
 )
 from .report_agent import make_report_node
+from .production_tools import build_production_tool_registry
 from .state import InvestigationInput, InvestigationState
 from .tool_registry import ToolRegistry
 
@@ -71,7 +72,9 @@ def build_workflow(
     """Compile the workflow with production LLMs or deterministic test nodes."""
 
     if agent_nodes is None:
-        nodes = _llm_nodes(model or build_chat_model(), tool_registry or ToolRegistry())
+        registry = tool_registry or build_production_tool_registry()
+        registry.require_tools()
+        nodes = _llm_nodes(model or build_chat_model(), registry)
     else:
         missing = LLM_NODE_NAMES - agent_nodes.keys()
         extra = agent_nodes.keys() - LLM_NODE_NAMES

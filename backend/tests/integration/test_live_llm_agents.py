@@ -6,6 +6,7 @@ import pytest
 from langchain_core.tools import tool
 
 from app.investigation_orchestrator.agents import (
+    build_kyc_agent,
     build_planner_agent,
     build_report_agent,
     build_screening_agent,
@@ -17,6 +18,10 @@ from app.investigation_orchestrator.agents import (
 from app.investigation_orchestrator.model import build_chat_model
 from app.investigation_orchestrator.tool_registry import ToolResult
 from app.screening import ScreeningFacade, build_screening_tools
+from app.transaction_investigation import build_transaction_tools
+from app.kyc_entity import build_kyc_tools
+from app.schemas.evidence import KycEvidence
+from app.schemas.kyc_entity import CompanyProfileSnapshot
 
 
 pytestmark = pytest.mark.live_llm
@@ -41,6 +46,56 @@ class StaticScreeningProvider:
                 "screening_dependency": "available",
             }
         ]
+
+
+class StaticTransactionService:
+    """Production-adapter dependency with one deterministic internal record."""
+
+    def get_account_transactions(self, *args, **kwargs):
+        return {
+            "transactions": [
+                {
+                    "transaction_id": "TX-LIVE-PRODUCTION-1",
+                    "source_account_ref": "ACCT-SHB-LIVE-001",
+                    "destination_account_ref": "ACCT-SHB-LIVE-002",
+                    "amount": 1250000.0,
+                    "occurred_at": "2026-01-01T10:00:00+00:00",
+                    "evidence_source": "SHB_TRANSACTION_LEDGER",
+                    "data_visibility": "FULL_INTERNAL",
+                }
+            ],
+            "counterparty_summary": [],
+            "total_inbound_amount": 0.0,
+            "total_outbound_amount": 1250000.0,
+            "net_flow": -1250000.0,
+            "count": 1,
+        }
+
+
+class StaticKycFacade:
+    """Production-adapter dependency with one deterministic internal profile."""
+
+    def get_company_profile(self, company_id, as_of_date):
+        return CompanyProfileSnapshot(
+            entity={"company_id": company_id, "legal_name": "Live Test Company"},
+            address=None,
+            accounts=[],
+            kyc_profile=None,
+            documents=[],
+            representative=None,
+            direct_owners=[],
+            ownership_coverage_percentage=100.0,
+            ownership_status="COMPLETE",
+            evidence=[
+                KycEvidence(
+                    evidence_id="EV-LIVE-KYC-COMPANY",
+                    source_type="SHB_COMPANY_MASTER",
+                    source_record_id=company_id,
+                    statement=f"SHB company master record {company_id}",
+                    visibility_level="FULL_INTERNAL",
+                )
+            ],
+        )
 
 
 def test_live_planner_returns_the_mandatory_plan() -> None:
@@ -84,6 +139,66 @@ def test_live_transaction_agent_uses_tool_derived_evidence() -> None:
         set(finding["evidence_ids"]) <= {"E-LIVE-TX"}
         for finding in output["findings"]
     )
+
+
+def test_live_transaction_agent_selects_the_registered_production_tool() -> None:
+    tools = build_transaction_tools(StaticTransactionService())
+    context = json.dumps(
+        {
+            "case_id": "CASE-LIVE-PRODUCTION-TX",
+            "instruction": (
+                "Call get_account_transactions exactly once for the account_id "
+                "below. Do not call another tool. Report only tool-derived evidence."
+            ),
+            "account_id": "ACCT-SHB-LIVE-001",
+            "alert": {"data_visibility": "FULL_INTERNAL"},
+        }
+    )
+
+    output = invoke_worker(
+        "transaction",
+        build_transaction_agent(build_chat_model(), tools),
+        tools,
+        context,
+    )
+
+    assert output["status"] != "ERROR", output["metadata"]
+    assert output["available"] is True, output["metadata"]
+    assert {item["evidence_id"] for item in output["evidence"]} == {
+        "TX-LIVE-PRODUCTION-1"
+    }
+    assert output["evidence"][0]["source_system"] == "SHB_TRANSACTION_LEDGER"
+    assert output["evidence"][0]["visibility_level"] == "FULL_INTERNAL"
+
+
+def test_live_kyc_agent_selects_the_registered_production_tool() -> None:
+    tools = build_kyc_tools(StaticKycFacade())
+    context = json.dumps(
+        {
+            "case_id": "CASE-LIVE-PRODUCTION-KYC",
+            "instruction": (
+                "Call get_company_profile exactly once using the company_id and "
+                "as_of_date below. Do not call another tool. Report only "
+                "tool-derived internal evidence."
+            ),
+            "company_id": "COMP-LIVE-001",
+            "as_of_date": "2025-12-20",
+        }
+    )
+
+    output = invoke_worker(
+        "kyc",
+        build_kyc_agent(build_chat_model(), tools),
+        tools,
+        context,
+    )
+
+    assert output["status"] != "ERROR", output["metadata"]
+    assert output["available"] is True, output["metadata"]
+    assert {item["evidence_id"] for item in output["evidence"]} == {
+        "EV-LIVE-KYC-COMPANY"
+    }
+    assert output["evidence"][0]["source_system"] == "SHB_COMPANY_MASTER"
 
 
 def test_live_screening_agent_cannot_confirm_external_name_only_match() -> None:

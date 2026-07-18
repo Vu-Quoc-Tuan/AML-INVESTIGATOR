@@ -10,6 +10,15 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 
 AgentName = Literal["transaction", "kyc", "screening"]
+REQUIRED_TOOL_OWNERS: tuple[AgentName, ...] = (
+    "transaction",
+    "kyc",
+    "screening",
+)
+
+
+class ToolConfigurationError(RuntimeError):
+    """Raised when production agent tool ownership is incomplete or ambiguous."""
 
 
 class ToolEvidence(BaseModel):
@@ -63,3 +72,12 @@ class ToolRegistry:
             return self._tools[owner][name]
         except KeyError:
             raise KeyError(f"Tool {name!r} is not registered for {owner}") from None
+
+    def require_tools(
+        self, owners: Iterable[AgentName] = REQUIRED_TOOL_OWNERS
+    ) -> None:
+        missing = sorted(owner for owner in owners if not self._tools[owner])
+        if missing:
+            raise ToolConfigurationError(
+                f"Missing required tools for owners: {', '.join(missing)}"
+            )

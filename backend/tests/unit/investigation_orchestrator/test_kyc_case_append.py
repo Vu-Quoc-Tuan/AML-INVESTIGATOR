@@ -1,37 +1,64 @@
-import pytest
+"""KYC evidence is committed and validated only by the orchestrator."""
 
-from app.investigation_orchestrator.state import append_kyc_contribution
-from app.kyc_entity.exceptions import EvidenceContractError
-from app.schemas.evidence import KycEvidence
-from app.schemas.kyc_entity import KycCaseContribution, KycFinding
-from app.schemas.state import SharedCaseFile
+from copy import deepcopy
 
-
-def _evidence(evidence_id="EV-1"):
-    return KycEvidence(
-        evidence_id=evidence_id,
-        source_type="TEST",
-        source_record_id="R1",
-        statement="test evidence",
-        visibility_level="FULL_INTERNAL",
-    )
+from app.investigation_orchestrator.evidence_validator import validate_evidence
+from app.investigation_orchestrator.nodes import merge_and_validate_node
+from app.investigation_orchestrator.state import initial_state
 
 
-def test_exact_retry_is_idempotent():
-    case = SharedCaseFile(case_id="CASE-1")
-    contribution = KycCaseContribution(evidence=[_evidence()])
-    once = append_kyc_contribution(case, contribution)
-    twice = append_kyc_contribution(once, contribution)
-    assert len(twice.evidence) == 1
-    assert twice.revision == 1
+def parallel_state(kyc_evidence_ids: list[str]) -> dict:
+    return {
+        **initial_state("CASE-KYC-MERGE", {}),
+        "agent_outputs": {
+            "transaction": {
+                "agent": "transaction_agent",
+                "status": "COMPLETED",
+                "findings": [],
+                "evidence": [],
+            },
+            "kyc": {
+                "agent": "kyc_agent",
+                "status": "COMPLETED",
+                "findings": [
+                    {
+                        "finding_id": "F-KYC-1",
+                        "finding_type": "KYC_PROFILE",
+                        "summary": "Verified internal KYC profile",
+                        "evidence_ids": kyc_evidence_ids,
+                        "entity_scope": "SHB_INTERNAL",
+                    }
+                ],
+                "evidence": [
+                    {
+                        "evidence_id": "EV-KYC-1",
+                        "source_system": "SHB_KYC_PROFILE",
+                        "source_record_id": "KYC-1",
+                        "visibility_level": "FULL_INTERNAL",
+                    }
+                ],
+            },
+        },
+    }
 
 
-def test_invalid_reference_rolls_back():
-    case = SharedCaseFile(case_id="CASE-1")
-    contribution = KycCaseContribution(kyc_findings=[KycFinding(
-        finding_id="F1", type="X", statement="x", evidence_ids=["EV-MISSING"]
-    )])
-    with pytest.raises(EvidenceContractError):
-        append_kyc_contribution(case, contribution)
-    assert case.revision == 0
-    assert case.kyc_findings == []
+def test_exact_retry_builds_the_same_case_file_without_mutating_input() -> None:
+    state = parallel_state(["EV-KYC-1"])
+    before = deepcopy(state)
+
+    first = merge_and_validate_node(state).update["case_file"]
+    second = merge_and_validate_node(state).update["case_file"]
+
+    assert first == second
+    assert state == before
+
+
+def test_invalid_kyc_reference_is_excluded_by_deterministic_validation() -> None:
+    state = parallel_state(["EV-KYC-MISSING"])
+    case_file = merge_and_validate_node(state).update["case_file"]
+
+    validation, validated_case = validate_evidence(case_file)
+
+    assert validation["status"] == "FAILED"
+    assert validated_case["findings"] == []
+    assert case_file["findings"]

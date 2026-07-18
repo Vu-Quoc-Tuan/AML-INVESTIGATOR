@@ -121,8 +121,11 @@ graph LR
 - `get_kyc_documents`
 - `build_ownership_graph`
 - `calculate_ubo`
-- `compare_profile_with_behavior`
 - `find_ownership_gaps`
+
+`compare_profile_with_behavior` remains a backend-internal capability. It is not
+exposed to the parallel KYC agent until a verified Transaction-evidence handoff
+or a deterministic post-merge analysis node is available.
 
 **Screening & Compliance Tools (Người 4):**
 - `screen_internal_watchlist`

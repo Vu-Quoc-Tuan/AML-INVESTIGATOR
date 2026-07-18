@@ -1,8 +1,10 @@
 """Focused checks for the Hybrid Supervisor workflow skeleton."""
 
+import pytest
 from langgraph.types import Command
 
 from app.investigation_orchestrator.evidence_validator import validate_evidence
+from app.investigation_orchestrator import workflow as workflow_module
 from app.investigation_orchestrator.nodes import (
     merge_and_validate_node,
     supervisor_node,
@@ -10,6 +12,10 @@ from app.investigation_orchestrator.nodes import (
 from app.investigation_orchestrator.report_agent import _reviewable_error
 from app.investigation_orchestrator.state import initial_state
 from app.investigation_orchestrator.workflow import build_workflow
+from app.investigation_orchestrator.tool_registry import (
+    ToolConfigurationError,
+    ToolRegistry,
+)
 from tests.node_fixtures import deterministic_agent_nodes, report_node
 
 
@@ -266,6 +272,32 @@ def test_malformed_worker_items_are_excluded_instead_of_crashing() -> None:
     assert validation["issues"]
     assert validated_case["findings"] == []
     assert validated_case["evidence"] == []
+
+
+def test_llm_workflow_rejects_an_incomplete_injected_registry() -> None:
+    with pytest.raises(
+        ToolConfigurationError,
+        match=r"Missing required tools for owners: kyc, screening, transaction$",
+    ):
+        build_workflow(model=object(), tool_registry=ToolRegistry())
+
+
+def test_default_llm_path_composes_all_production_tool_owners(monkeypatch) -> None:
+    captured = {}
+
+    def capture_nodes(_model, registry):
+        captured["tool_names"] = {
+            owner: {tool.name for tool in registry.tools_for(owner)}
+            for owner in ("transaction", "kyc", "screening")
+        }
+        return deterministic_agent_nodes()
+
+    monkeypatch.setattr(workflow_module, "_llm_nodes", capture_nodes)
+
+    workflow_module.build_workflow(model=object())
+
+    assert all(captured["tool_names"].values())
+    assert "calculate_ubo" in captured["tool_names"]["kyc"]
 
 
 def test_invalid_finding_is_excluded_and_reported() -> None:

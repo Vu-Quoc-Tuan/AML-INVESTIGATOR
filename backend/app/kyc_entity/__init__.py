@@ -9,6 +9,7 @@ from .exceptions import (
     KycEntityError,
     OwnershipTraversalError,
 )
+from .tool_adapter import build_kyc_tools
 
 __all__ = [
     "EntityNotFoundError",
@@ -18,4 +19,5 @@ __all__ = [
     "KycEntityConfig",
     "KycEntityError",
     "OwnershipTraversalError",
+    "build_kyc_tools",
 ]
