@@ -734,7 +734,7 @@ class DataRepository:
     @staticmethod
     def _defensive_frame(frame: pd.DataFrame) -> pd.DataFrame:
         copied = frame.copy(deep=True)
-        for column in copied.select_dtypes(include=["object", "str"]).columns:
+        for column in copied.select_dtypes(include=["object", "string"]).columns:
             copied[column] = copied[column].map(deepcopy)
         return copied
 
