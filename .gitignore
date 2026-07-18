@@ -10,5 +10,4 @@ __pycache__/
 .pytest_cache/
 .env
 plan/
-backend/tests
 backend/pytest.ini
