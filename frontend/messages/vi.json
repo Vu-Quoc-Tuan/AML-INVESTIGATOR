@@ -1,0 +1,141 @@
+{
+  "Metadata": {
+    "title": "AML-Investigator | Điều tra phòng chống rửa tiền",
+    "description": "Nền tảng điều tra phòng chống rửa tiền được hỗ trợ bởi AI"
+  },
+  "Common": {
+    "globalSearch": "Tìm tài khoản, hồ sơ"
+  },
+  "Accessibility": {
+    "languageSwitcher": "Chọn ngôn ngữ",
+    "mainNavigation": "Điều hướng chính",
+    "mobileNavigation": "Điều hướng trên thiết bị di động",
+    "notifications": "Thông báo",
+    "userAvatar": "Ảnh đại diện người dùng"
+  },
+  "Navigation": {
+    "dashboard": "Trang chủ",
+    "history": "Lịch sử đáng ngờ",
+    "workflow": "Luồng Agent",
+    "monitoring": "Giám sát",
+    "settings": "Cấu hình Agent"
+  },
+  "Status": {
+    "pending": "Đang chờ",
+    "checking": "Đang kiểm tra",
+    "reject": "Đã từ chối",
+    "safety": "An toàn",
+    "approve": "Đã phê duyệt"
+  },
+  "AgentState": {
+    "idle": "Chờ",
+    "thinking": "Đang suy luận",
+    "working": "Đang xử lý",
+    "completed": "Hoàn tất"
+  },
+  "Agents": {
+    "statusLabel": "Trạng thái",
+    "planner": {
+      "name": "Planner Agent",
+      "action": "Đang ưu tiên các cụm giao dịch đáng ngờ"
+    },
+    "transaction": {
+      "name": "Transaction Agent",
+      "action": "Đang truy vết dòng tiền giữa các tài khoản"
+    },
+    "report": {
+      "name": "Report Agent",
+      "action": "Đang chờ bằng chứng của hồ sơ"
+    },
+    "kyc": {
+      "name": "KYC Agent",
+      "action": "Đã xác minh đồ thị chủ sở hữu hưởng lợi"
+    }
+  },
+  "Dashboard": {
+    "title": "AML-Investigator",
+    "subtitle": "Nền tảng điều tra phòng chống rửa tiền được hỗ trợ bởi AI",
+    "stats": {
+      "pending": {"title": "Đang chờ", "description": "Các cuộc điều tra đang chờ phân loại"},
+      "checking": {"title": "Đang kiểm tra", "description": "AI Agent đang chủ động rà soát"},
+      "reject": {"title": "Đã từ chối", "description": "Các hồ sơ bị từ chối sau khi rà soát"},
+      "approve": {"title": "Đã phê duyệt", "description": "Các hồ sơ đã được phê duyệt và lưu trữ"}
+    },
+    "days": {"mon": "T2", "tue": "T3", "wed": "T4", "thu": "T5", "fri": "T6", "sat": "T7", "sun": "CN"},
+    "chart": {
+      "title": "Xu hướng luồng giao dịch",
+      "description": "Khối lượng và mẫu giao dịch bị gắn cờ trong tuần hiện tại.",
+      "volume": "Khối lượng giao dịch",
+      "flagged": "Giao dịch bị gắn cờ"
+    }
+  },
+  "History": {
+    "title": "Lịch sử đáng ngờ",
+    "subtitle": "Rà soát các cuộc điều tra giao dịch đáng ngờ.",
+    "search": "Tìm kiếm cuộc điều tra",
+    "filter": "Bộ lọc",
+    "export": "Xuất dữ liệu",
+    "columns": {"id": "Mã hồ sơ", "status": "Trạng thái", "account": "Số tài khoản", "action": "Hoạt động"},
+    "actions": {
+      "awaitingPlanner": "Đang chờ Planner Agent rà soát",
+      "tracingLayers": "Đang truy vết giao dịch phân lớp",
+      "releasedKyc": "Được giải phóng sau khi khớp KYC",
+      "manualReview": "Đã chuyển sang rà soát thủ công",
+      "fanIn": "Đang phát hiện mẫu fan-in",
+      "riskScoring": "Đang chờ chấm điểm rủi ro"
+    },
+    "detailsTitle": "Đã mở chi tiết cuộc điều tra",
+    "detailsDescription": "{id} đã sẵn sàng để chuyên viên rà soát cùng đồ thị giao dịch, bằng chứng KYC và lập luận của Agent.",
+    "pagination": {"summary": "Đang hiển thị {from}-{to} trên tổng số {total} hồ sơ", "previous": "Trước", "next": "Sau"}
+  },
+  "Workflow": {
+    "title": "Luồng Agent",
+    "subtitle": "Trực quan hóa cách các AI Agent phối hợp trong quá trình điều tra AML.",
+    "activeAgents": "Agent đang hoạt động",
+    "recentActions": "Hoạt động gần đây",
+    "activity": {
+      "fetchingHistory": "Đang tải lịch sử giao dịch...",
+      "prioritizingRisk": "Đang ưu tiên các cụm rủi ro thực thể...",
+      "routingAccounts": "Đang định tuyến tài khoản có vận tốc cao...",
+      "tracingFunds": "Đang truy vết dòng tiền...",
+      "detectingFanIn": "Đang phát hiện fan-in...",
+      "calculatingMetrics": "Đang tính toán chỉ số đồ thị...",
+      "reportOutline": "Đang tạo dàn ý báo cáo...",
+      "evidenceSummary": "Đang đính kèm tóm tắt bằng chứng...",
+      "plannerApproval": "Đang chờ Planner Agent phê duyệt...",
+      "matchingOwners": "Đang đối chiếu chủ sở hữu hưởng lợi...",
+      "screeningAliases": "Đang sàng lọc bí danh trừng phạt...",
+      "identityScore": "Đang hoàn tất điểm tin cậy danh tính..."
+    }
+  },
+  "Monitoring": {
+    "title": "Giám sát Agent",
+    "subtitle": "Theo dõi tình trạng vận hành, mức sử dụng tài nguyên và thông lượng của các AML Agent.",
+    "agentStatus": "Trạng thái Agent: {status}",
+    "healthy": "Ổn định",
+    "health": "Tình trạng",
+    "latency": "Độ trễ",
+    "tasks": "Tác vụ đã xử lý",
+    "currentAction": "Hoạt động hiện tại",
+    "utilization": "Mức sử dụng tài nguyên",
+    "restart": "Khởi động lại",
+    "exportLogs": "Xuất nhật ký"
+  },
+  "Settings": {
+    "title": "Cấu hình Agent",
+    "subtitle": "Điều chỉnh lệnh hệ thống, độ sâu suy luận và mô hình thực thi cho Agent điều tra.",
+    "systemPrompt": {
+      "title": "Chỉnh sửa lệnh hệ thống",
+      "placeholder": "Nhập system prompt...",
+      "reset": "Đặt lại",
+      "save": "Lưu cấu hình"
+    },
+    "modelLevel": {
+      "title": "Mức độ mô hình",
+      "light": {"name": "Nhẹ", "description": "Kiểm tra nhanh cho hàng đợi rủi ro thấp."},
+      "medium": {"name": "Trung bình", "description": "Suy luận cân bằng cho công việc rà soát hằng ngày."},
+      "strong": {"name": "Mạnh", "description": "Phân tích đa bước chuyên sâu cho các hồ sơ cần chuyển cấp."}
+    },
+    "availableModels": "Mô hình khả dụng"
+  }
+}

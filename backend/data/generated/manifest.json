@@ -1,0 +1,71 @@
+{
+  "checksums_sha256": {
+    "accounts.csv": "c5b1990134ced83f552f72e281c38598805c0c3825530ab16faeef650308fb6e",
+    "addresses.csv": "1480715086311c9bb5e3f0d4bc01e258ff701d4849af0c605db73180b0f2163d",
+    "banks.csv": "1158700bcc0731be854496a4befc8d479b26170478a4b9d19b3076cbc4eae82b",
+    "companies.csv": "6dc6dde16909b49ae161bc963b223fa948a5fbb7e77fac01282e0a9612064093",
+    "company_ownership.csv": "3c65c69d8c9a8cb564b7055fc9ea923a53daf77dcc2a7dc57cfdd4daa420c181",
+    "customers.csv": "e3ccc072ab484e8d4beddf697792828155cba3425723de747e54470e11cd8505",
+    "entity_relationships.csv": "c171c78360e917ee90a05628007eefdad471c57c83f54c44cbfd322114e17e5c",
+    "external_accounts.csv": "a5513b898a1786d807d252c4b6d60e0f02cc1dac49b6e4213a1a9ad2be22db7e",
+    "ground_truth_scenarios.json": "4a6a16f0b9f2380da8cc7c6529ea33e0e8b443a1e82da3c9db2e4e311f4253d2",
+    "kyc_documents.jsonl": "6dde8f0b2d8b7a9aedaf726fb37baf12544dd2b4b07f053b162787a21059f71f",
+    "kyc_profiles.jsonl": "f62226c7373161b8270f30ba3436351d93878f0834fe7ba8f8b935d78a3a5cff",
+    "transactions.csv": "2c5510f75bf4949ddab871c489caedd3ccf5d5edd49a4a9729c20a64ec91b112",
+    "watchlist_entries.jsonl": "614307daceb7a688f4d2efd34fe02407132d633eb0f9ec4fed0e7a2093b467a8"
+  },
+  "config": {
+    "base_currency": "VND",
+    "cross_border_ratio": 0.05,
+    "crypto_platform_bank_id": "BANK-CRYPTO-DEMO-99",
+    "domestic_bank_ids": [
+      "BANK-VCB-EXT",
+      "BANK-TCB-EXT",
+      "BANK-MBB-EXT",
+      "BANK-ACB-EXT",
+      "BANK-VPB-EXT"
+    ],
+    "high_risk_foreign_bank_id": "BANK-FOREIGN-HR-88",
+    "home_bank_id": "BANK-SHB-001",
+    "inbound_transaction_ratio": 0.275,
+    "inject_incomplete_evidence": true,
+    "internal_transaction_ratio": 0.45,
+    "max_accounts": 3000,
+    "min_accounts": 2500,
+    "n_companies": 50,
+    "n_customers": 2000,
+    "n_external_accounts": 1000,
+    "n_lookalike_scenarios": 3,
+    "n_suspicious_scenarios": 3,
+    "n_transactions": 40000,
+    "normal_foreign_countries": [
+      "SG",
+      "CN",
+      "US",
+      "JP",
+      "KR",
+      "DE"
+    ],
+    "outbound_transaction_ratio": 0.275,
+    "output_dir": "data/generated",
+    "random_seed": 42,
+    "window_days": 90,
+    "world_end": "2025-12-31T23:59:59+00:00",
+    "world_start": "2025-10-02T23:59:59+00:00"
+  },
+  "counts": {
+    "accounts": 2500,
+    "banks": 14,
+    "companies": 50,
+    "customers": 2000,
+    "external_accounts": 1000,
+    "kyc_documents": 2096,
+    "kyc_profiles": 2050,
+    "normal_transactions": 40000,
+    "ownerships": 100,
+    "relationships": 261,
+    "scenarios": 7,
+    "transactions": 40193,
+    "watchlist": 53
+  }
+}

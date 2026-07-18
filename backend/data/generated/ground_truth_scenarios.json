@@ -1,0 +1,649 @@
+[
+  {
+    "end_time": "2025-12-13T14:07:13Z",
+    "expected_alert_type": "RAPID_FAN_IN_PASS_THROUGH",
+    "expected_case_disposition": "ESCALATE_FOR_SAR_REVIEW",
+    "explanation": "Six SHB personal accounts and four external domestic accounts each transferred ~500M VND into a newly opened company account within five minutes. The company declared only 300M VND monthly turnover. Approximately 121 seconds later, 99.2% of received funds were sent to a high-risk foreign bank demo. Six internal source accounts were funded from the same crypto-platform demo; several shared SHB-observed device/IP. External sources have payment-message-only visibility. The company has verified SHB KYC and declared UBO evidence.",
+    "external_account_ids": [
+      "EXT-ACC-000525",
+      "EXT-ACC-000855",
+      "EXT-ACC-000035",
+      "EXT-ACC-000165",
+      "EXT-ACC-CRYPTO-001",
+      "EXT-ACC-HR-001"
+    ],
+    "hidden_world_facts": [
+      "The four external originators were coordinated with the six SHB senders."
+    ],
+    "internal_account_ids": [
+      "ACCT-SHB-000695",
+      "ACCT-SHB-001294",
+      "ACCT-SHB-000020",
+      "ACCT-SHB-001083",
+      "ACCT-SHB-001889",
+      "ACCT-SHB-000228",
+      "ACCT-SHB-002382"
+    ],
+    "involved_account_ids": [
+      "ACCT-SHB-000695",
+      "ACCT-SHB-001294",
+      "ACCT-SHB-000020",
+      "ACCT-SHB-001083",
+      "ACCT-SHB-001889",
+      "ACCT-SHB-000228",
+      "ACCT-SHB-002382",
+      "EXT-ACC-000525",
+      "EXT-ACC-000855",
+      "EXT-ACC-000035",
+      "EXT-ACC-000165",
+      "EXT-ACC-CRYPTO-001",
+      "EXT-ACC-HR-001"
+    ],
+    "involved_entity_ids": [
+      "CUST-000590",
+      "CUST-001093",
+      "CUST-000017",
+      "CUST-000913",
+      "CUST-001599",
+      "CUST-000193",
+      "COMP-000008"
+    ],
+    "notes": {
+      "declared_monthly_turnover": 300000000,
+      "external_source_count": 4,
+      "internal_source_count": 6,
+      "pass_through_ratio": 0.992,
+      "scenario_key": "RAPID_FAN_IN_PASS_THROUGH",
+      "source_count": 10
+    },
+    "observable_external_facts": [
+      "Four domestic external originators were observed through payment messages.",
+      "The outbound beneficiary is held at a high-risk foreign external bank."
+    ],
+    "observable_internal_facts": [
+      "Six SHB personal accounts received crypto-platform inbound payments.",
+      "Six SHB accounts joined a ten-source fan-in to a new SHB company account.",
+      "The SHB company has verified KYC and declared UBO evidence.",
+      "The SHB company sent 99.2 percent outbound after 121 seconds."
+    ],
+    "scenario_id": "SCN-001",
+    "scenario_type": "SUSPICIOUS",
+    "start_time": "2025-12-13T11:00:00Z",
+    "suspicious_transaction_ids": [
+      "TXN-00040001",
+      "TXN-00040002",
+      "TXN-00040003",
+      "TXN-00040004",
+      "TXN-00040005",
+      "TXN-00040006",
+      "TXN-00040007",
+      "TXN-00040008",
+      "TXN-00040009",
+      "TXN-00040010",
+      "TXN-00040011",
+      "TXN-00040012",
+      "TXN-00040013",
+      "TXN-00040014",
+      "TXN-00040015",
+      "TXN-00040016",
+      "TXN-00040017"
+    ],
+    "typology_tags": [
+      "fan_in",
+      "pass_through",
+      "crypto_source",
+      "rapid_outflow",
+      "new_corporate_account"
+    ]
+  },
+  {
+    "end_time": "2025-12-16T15:00:00Z",
+    "expected_alert_type": "STRUCTURING",
+    "expected_case_disposition": "ESCALATE_FOR_SAR_REVIEW",
+    "explanation": "Twelve inbound transfers just under a 100M VND monitoring threshold arrived within 24 hours into a single personal account, consistent with structuring/smurfing typology.",
+    "external_account_ids": [],
+    "hidden_world_facts": [],
+    "internal_account_ids": [
+      "ACCT-SHB-000261",
+      "ACCT-SHB-000773",
+      "ACCT-SHB-001035",
+      "ACCT-SHB-001722",
+      "ACCT-SHB-001759",
+      "ACCT-SHB-000650",
+      "ACCT-SHB-000022",
+      "ACCT-SHB-001254",
+      "ACCT-SHB-002027",
+      "ACCT-SHB-000217",
+      "ACCT-SHB-001655",
+      "ACCT-SHB-000863",
+      "ACCT-SHB-001835"
+    ],
+    "involved_account_ids": [
+      "ACCT-SHB-000261",
+      "ACCT-SHB-000773",
+      "ACCT-SHB-001035",
+      "ACCT-SHB-001722",
+      "ACCT-SHB-001759",
+      "ACCT-SHB-000650",
+      "ACCT-SHB-000022",
+      "ACCT-SHB-001254",
+      "ACCT-SHB-002027",
+      "ACCT-SHB-000217",
+      "ACCT-SHB-001655",
+      "ACCT-SHB-000863",
+      "ACCT-SHB-001835"
+    ],
+    "involved_entity_ids": [
+      "CUST-000223",
+      "CUST-000657",
+      "CUST-000873",
+      "CUST-001462",
+      "CUST-001493",
+      "CUST-000551",
+      "CUST-000018",
+      "CUST-001056",
+      "CUST-001713",
+      "CUST-000183",
+      "CUST-001405",
+      "CUST-000730",
+      "CUST-001557"
+    ],
+    "notes": {
+      "scenario_key": "STRUCTURING_SMURFING"
+    },
+    "observable_external_facts": [],
+    "observable_internal_facts": [
+      "SHB observed internal accounts and transactions for STRUCTURING_SMURFING."
+    ],
+    "scenario_id": "SCN-002",
+    "scenario_type": "SUSPICIOUS",
+    "start_time": "2025-12-15T09:00:00Z",
+    "suspicious_transaction_ids": [
+      "TXN-00040019",
+      "TXN-00040021",
+      "TXN-00040023",
+      "TXN-00040025",
+      "TXN-00040027",
+      "TXN-00040029",
+      "TXN-00040031",
+      "TXN-00040033",
+      "TXN-00040035",
+      "TXN-00040037",
+      "TXN-00040039",
+      "TXN-00040041"
+    ],
+    "typology_tags": [
+      "structuring",
+      "smurfing",
+      "threshold_avoidance"
+    ]
+  },
+  {
+    "end_time": "2025-12-24T16:20:00Z",
+    "expected_alert_type": "LAYERING_CHAIN",
+    "expected_case_disposition": "ESCALATE_FOR_SAR_REVIEW",
+    "explanation": "Funds entered from a crypto-platform demo, hopped through four personal accounts within 15 minutes with ~2% haircut each hop, then exited to a high-risk foreign bank — classic layering via mule accounts.",
+    "external_account_ids": [
+      "EXT-ACC-CRYPTO-001",
+      "EXT-ACC-HR-001"
+    ],
+    "hidden_world_facts": [],
+    "internal_account_ids": [
+      "ACCT-SHB-001778",
+      "ACCT-SHB-001465",
+      "ACCT-SHB-000251",
+      "ACCT-SHB-001048"
+    ],
+    "involved_account_ids": [
+      "ACCT-SHB-001778",
+      "ACCT-SHB-001465",
+      "ACCT-SHB-000251",
+      "ACCT-SHB-001048",
+      "EXT-ACC-CRYPTO-001",
+      "EXT-ACC-HR-001"
+    ],
+    "involved_entity_ids": [
+      "CUST-001508",
+      "CUST-001238",
+      "CUST-000214",
+      "CUST-000885"
+    ],
+    "notes": {
+      "scenario_key": "MULE_LAYERING_CHAIN"
+    },
+    "observable_external_facts": [
+      "External counterparties in MULE_LAYERING_CHAIN are limited to payment-message evidence."
+    ],
+    "observable_internal_facts": [
+      "SHB observed internal accounts and transactions for MULE_LAYERING_CHAIN."
+    ],
+    "scenario_id": "SCN-003",
+    "scenario_type": "SUSPICIOUS",
+    "start_time": "2025-12-24T16:00:00Z",
+    "suspicious_transaction_ids": [
+      "TXN-00040042",
+      "TXN-00040043",
+      "TXN-00040044",
+      "TXN-00040045",
+      "TXN-00040046"
+    ],
+    "typology_tags": [
+      "layering",
+      "mule",
+      "crypto_source",
+      "rapid_chain"
+    ]
+  },
+  {
+    "end_time": "2025-12-06T10:00:00Z",
+    "expected_alert_type": "FAN_IN_TICKET_SALES",
+    "expected_case_disposition": "CLEARED_WITH_RATIONALE",
+    "explanation": "Multiple customers paid an established event organizer (>5 years) with valid ticket/order IDs and tiered amounts consistent with prior event sales. No shared crypto source, no abnormal shared devices, and no rapid near-total foreign outflow.",
+    "external_account_ids": [],
+    "hidden_world_facts": [],
+    "internal_account_ids": [
+      "ACCT-SHB-002410",
+      "ACCT-SHB-002031",
+      "ACCT-SHB-000740",
+      "ACCT-SHB-000144",
+      "ACCT-SHB-000800",
+      "ACCT-SHB-002050",
+      "ACCT-SHB-001420",
+      "ACCT-SHB-001721",
+      "ACCT-SHB-001042",
+      "ACCT-SHB-001751",
+      "ACCT-SHB-000211",
+      "ACCT-SHB-001752",
+      "ACCT-SHB-000558",
+      "ACCT-SHB-000142",
+      "ACCT-SHB-001222",
+      "ACCT-SHB-000669",
+      "ACCT-SHB-000969",
+      "ACCT-SHB-000171",
+      "ACCT-SHB-001443",
+      "ACCT-SHB-002277",
+      "ACCT-SHB-000454",
+      "ACCT-SHB-001879",
+      "ACCT-SHB-002164",
+      "ACCT-SHB-000784",
+      "ACCT-SHB-000101",
+      "ACCT-SHB-000530",
+      "ACCT-SHB-001833",
+      "ACCT-SHB-001375",
+      "ACCT-SHB-001888",
+      "ACCT-SHB-000409",
+      "ACCT-SHB-001657",
+      "ACCT-SHB-001211",
+      "ACCT-SHB-000927",
+      "ACCT-SHB-001714",
+      "ACCT-SHB-000958",
+      "ACCT-SHB-001454",
+      "ACCT-SHB-000077",
+      "ACCT-SHB-002222",
+      "ACCT-SHB-001056",
+      "ACCT-SHB-001002",
+      "ACCT-SHB-002000",
+      "ACCT-SHB-002387"
+    ],
+    "involved_account_ids": [
+      "ACCT-SHB-002410",
+      "ACCT-SHB-002031",
+      "ACCT-SHB-000740",
+      "ACCT-SHB-000144",
+      "ACCT-SHB-000800",
+      "ACCT-SHB-002050",
+      "ACCT-SHB-001420",
+      "ACCT-SHB-001721",
+      "ACCT-SHB-001042",
+      "ACCT-SHB-001751",
+      "ACCT-SHB-000211",
+      "ACCT-SHB-001752",
+      "ACCT-SHB-000558",
+      "ACCT-SHB-000142",
+      "ACCT-SHB-001222",
+      "ACCT-SHB-000669",
+      "ACCT-SHB-000969",
+      "ACCT-SHB-000171",
+      "ACCT-SHB-001443",
+      "ACCT-SHB-002277",
+      "ACCT-SHB-000454",
+      "ACCT-SHB-001879",
+      "ACCT-SHB-002164",
+      "ACCT-SHB-000784",
+      "ACCT-SHB-000101",
+      "ACCT-SHB-000530",
+      "ACCT-SHB-001833",
+      "ACCT-SHB-001375",
+      "ACCT-SHB-001888",
+      "ACCT-SHB-000409",
+      "ACCT-SHB-001657",
+      "ACCT-SHB-001211",
+      "ACCT-SHB-000927",
+      "ACCT-SHB-001714",
+      "ACCT-SHB-000958",
+      "ACCT-SHB-001454",
+      "ACCT-SHB-000077",
+      "ACCT-SHB-002222",
+      "ACCT-SHB-001056",
+      "ACCT-SHB-001002",
+      "ACCT-SHB-002000",
+      "ACCT-SHB-002387"
+    ],
+    "involved_entity_ids": [
+      "COMP-000031",
+      "CUST-001717",
+      "CUST-000629",
+      "CUST-000120",
+      "CUST-000678",
+      "CUST-001735",
+      "CUST-001199",
+      "CUST-001461",
+      "CUST-000879",
+      "CUST-001486",
+      "CUST-000178",
+      "CUST-001487",
+      "CUST-000474",
+      "CUST-000118",
+      "CUST-001028",
+      "CUST-000567",
+      "CUST-000820",
+      "CUST-000143",
+      "CUST-001220",
+      "CUST-001921",
+      "CUST-000382",
+      "CUST-001592",
+      "CUST-001827",
+      "CUST-000665",
+      "CUST-000085",
+      "CUST-000450",
+      "CUST-001556",
+      "CUST-001160",
+      "CUST-001598",
+      "CUST-000345",
+      "CUST-001406",
+      "CUST-001019",
+      "CUST-000783",
+      "CUST-001455",
+      "CUST-000811",
+      "CUST-001228",
+      "CUST-000064",
+      "CUST-001875",
+      "CUST-000892",
+      "CUST-000846",
+      "CUST-001691",
+      "COMP-000013"
+    ],
+    "notes": {
+      "history_wave": true,
+      "n_buyers": 40,
+      "scenario_key": "EVENT_COLLECTION",
+      "ticket_prices": [
+        350000,
+        750000,
+        1500000,
+        3000000
+      ]
+    },
+    "observable_external_facts": [],
+    "observable_internal_facts": [
+      "SHB observed internal accounts and transactions for EVENT_COLLECTION."
+    ],
+    "scenario_id": "SCN-004",
+    "scenario_type": "LEGITIMATE_LOOKALIKE",
+    "start_time": "2025-10-30T10:00:00Z",
+    "suspicious_transaction_ids": [],
+    "typology_tags": [
+      "fan_in",
+      "lookalike",
+      "event_ticketing"
+    ]
+  },
+  {
+    "end_time": "2025-12-25T09:30:00Z",
+    "expected_alert_type": "FAN_OUT_PAYROLL",
+    "expected_case_disposition": "CLEARED_WITH_RATIONALE",
+    "explanation": "Fan-out of consistent salary amounts from a long-established payroll company via API channel with payroll purpose codes and employee references. Matches declared payroll activity.",
+    "external_account_ids": [],
+    "hidden_world_facts": [],
+    "internal_account_ids": [
+      "ACCT-SHB-002395",
+      "ACCT-SHB-000315",
+      "ACCT-SHB-000406",
+      "ACCT-SHB-001737",
+      "ACCT-SHB-001022",
+      "ACCT-SHB-001755",
+      "ACCT-SHB-002345",
+      "ACCT-SHB-001470",
+      "ACCT-SHB-000627",
+      "ACCT-SHB-001690",
+      "ACCT-SHB-001597",
+      "ACCT-SHB-000696",
+      "ACCT-SHB-000651",
+      "ACCT-SHB-001325",
+      "ACCT-SHB-000373",
+      "ACCT-SHB-000510",
+      "ACCT-SHB-001842",
+      "ACCT-SHB-001436",
+      "ACCT-SHB-001455",
+      "ACCT-SHB-000750",
+      "ACCT-SHB-000353",
+      "ACCT-SHB-000991",
+      "ACCT-SHB-002268",
+      "ACCT-SHB-000493",
+      "ACCT-SHB-001391",
+      "ACCT-SHB-000048",
+      "ACCT-SHB-001772",
+      "ACCT-SHB-001293",
+      "ACCT-SHB-001435",
+      "ACCT-SHB-001505",
+      "ACCT-SHB-001871",
+      "ACCT-SHB-000471",
+      "ACCT-SHB-001664",
+      "ACCT-SHB-001982",
+      "ACCT-SHB-001019",
+      "ACCT-SHB-000660"
+    ],
+    "involved_account_ids": [
+      "ACCT-SHB-002395",
+      "ACCT-SHB-000315",
+      "ACCT-SHB-000406",
+      "ACCT-SHB-001737",
+      "ACCT-SHB-001022",
+      "ACCT-SHB-001755",
+      "ACCT-SHB-002345",
+      "ACCT-SHB-001470",
+      "ACCT-SHB-000627",
+      "ACCT-SHB-001690",
+      "ACCT-SHB-001597",
+      "ACCT-SHB-000696",
+      "ACCT-SHB-000651",
+      "ACCT-SHB-001325",
+      "ACCT-SHB-000373",
+      "ACCT-SHB-000510",
+      "ACCT-SHB-001842",
+      "ACCT-SHB-001436",
+      "ACCT-SHB-001455",
+      "ACCT-SHB-000750",
+      "ACCT-SHB-000353",
+      "ACCT-SHB-000991",
+      "ACCT-SHB-002268",
+      "ACCT-SHB-000493",
+      "ACCT-SHB-001391",
+      "ACCT-SHB-000048",
+      "ACCT-SHB-001772",
+      "ACCT-SHB-001293",
+      "ACCT-SHB-001435",
+      "ACCT-SHB-001505",
+      "ACCT-SHB-001871",
+      "ACCT-SHB-000471",
+      "ACCT-SHB-001664",
+      "ACCT-SHB-001982",
+      "ACCT-SHB-001019",
+      "ACCT-SHB-000660"
+    ],
+    "involved_entity_ids": [
+      "COMP-000019",
+      "CUST-000270",
+      "CUST-000343",
+      "CUST-001474",
+      "CUST-000862",
+      "CUST-001489",
+      "CUST-001977",
+      "CUST-001243",
+      "CUST-000535",
+      "CUST-001434",
+      "CUST-001356",
+      "CUST-000591",
+      "CUST-000552",
+      "CUST-001118",
+      "CUST-000315",
+      "CUST-000433",
+      "CUST-001561",
+      "CUST-001214",
+      "CUST-001229",
+      "CUST-000639",
+      "CUST-000301",
+      "CUST-000836",
+      "CUST-001914",
+      "CUST-000419",
+      "CUST-001173",
+      "CUST-000041",
+      "CUST-001503",
+      "CUST-001092",
+      "CUST-001213",
+      "CUST-001276",
+      "CUST-001585",
+      "CUST-000397",
+      "CUST-001412",
+      "CUST-001677",
+      "CUST-000859",
+      "CUST-000559"
+    ],
+    "notes": {
+      "scenario_key": "PAYROLL_BATCH"
+    },
+    "observable_external_facts": [],
+    "observable_internal_facts": [
+      "SHB observed internal accounts and transactions for PAYROLL_BATCH."
+    ],
+    "scenario_id": "SCN-005",
+    "scenario_type": "LEGITIMATE_LOOKALIKE",
+    "start_time": "2025-12-25T08:30:00Z",
+    "suspicious_transaction_ids": [],
+    "typology_tags": [
+      "fan_out",
+      "lookalike",
+      "payroll"
+    ]
+  },
+  {
+    "end_time": "2025-12-01T17:00:00Z",
+    "expected_alert_type": "CROSS_BORDER_TRADE",
+    "expected_case_disposition": "CLEARED_WITH_RATIONALE",
+    "explanation": "Cross-border payment by an established import/export company with matching domestic receivable, invoice references, and turnover consistent with declared trade profile.",
+    "external_account_ids": [
+      "EXT-ACC-HR-001"
+    ],
+    "hidden_world_facts": [],
+    "internal_account_ids": [
+      "ACCT-SHB-002437",
+      "ACCT-SHB-002411"
+    ],
+    "involved_account_ids": [
+      "ACCT-SHB-002437",
+      "EXT-ACC-HR-001",
+      "ACCT-SHB-002411"
+    ],
+    "involved_entity_ids": [
+      "COMP-000050",
+      "COMP-000032"
+    ],
+    "notes": {
+      "scenario_key": "TRADE_INVOICE_SETTLEMENT"
+    },
+    "observable_external_facts": [
+      "External counterparties in TRADE_INVOICE_SETTLEMENT are limited to payment-message evidence."
+    ],
+    "observable_internal_facts": [
+      "SHB observed internal accounts and transactions for TRADE_INVOICE_SETTLEMENT."
+    ],
+    "scenario_id": "SCN-006",
+    "scenario_type": "LEGITIMATE_LOOKALIKE",
+    "start_time": "2025-11-27T15:00:00Z",
+    "suspicious_transaction_ids": [],
+    "typology_tags": [
+      "cross_border",
+      "lookalike",
+      "trade_finance"
+    ]
+  },
+  {
+    "end_time": "2025-12-16T11:45:00Z",
+    "expected_alert_type": "RAPID_PASS_THROUGH_INCOMPLETE_KYC",
+    "expected_case_disposition": "NEED_MORE_EVIDENCE",
+    "explanation": "Rapid fan-in and pass-through pattern is present, but KYC documents for the receiving company are expired, the ownership chain lacks a final natural-person UBO layer, and the screening dependency is marked unavailable. Disposition must be NEED_MORE_EVIDENCE / MANUAL_REVIEW_REQUIRED; do not conclude NO_MATCH.",
+    "external_account_ids": [
+      "EXT-ACC-HR-001"
+    ],
+    "hidden_world_facts": [],
+    "internal_account_ids": [
+      "ACCT-SHB-001908",
+      "ACCT-SHB-000738",
+      "ACCT-SHB-001150",
+      "ACCT-SHB-000157",
+      "ACCT-SHB-000854",
+      "ACCT-SHB-002332",
+      "ACCT-SHB-002415"
+    ],
+    "involved_account_ids": [
+      "ACCT-SHB-001908",
+      "ACCT-SHB-000738",
+      "ACCT-SHB-001150",
+      "ACCT-SHB-000157",
+      "ACCT-SHB-000854",
+      "ACCT-SHB-002332",
+      "ACCT-SHB-002415",
+      "EXT-ACC-HR-001"
+    ],
+    "involved_entity_ids": [
+      "CUST-001615",
+      "CUST-000628",
+      "CUST-000967",
+      "CUST-000130",
+      "CUST-000721",
+      "CUST-001964",
+      "COMP-000035"
+    ],
+    "notes": {
+      "alt_disposition": "MANUAL_REVIEW_REQUIRED",
+      "forbid_disposition": "NO_MATCH",
+      "scenario_key": "INCOMPLETE_EVIDENCE_PASS_THROUGH",
+      "screening_dependency": "unavailable",
+      "screening_entity_id": "COMP-000035"
+    },
+    "observable_external_facts": [
+      "External counterparties in INCOMPLETE_EVIDENCE_PASS_THROUGH are limited to payment-message evidence."
+    ],
+    "observable_internal_facts": [
+      "SHB observed internal accounts and transactions for INCOMPLETE_EVIDENCE_PASS_THROUGH."
+    ],
+    "scenario_id": "SCN-007",
+    "scenario_type": "INCOMPLETE_EVIDENCE",
+    "start_time": "2025-12-16T11:30:00Z",
+    "suspicious_transaction_ids": [
+      "TXN-00040169",
+      "TXN-00040171",
+      "TXN-00040173",
+      "TXN-00040175",
+      "TXN-00040177",
+      "TXN-00040179",
+      "TXN-00040180"
+    ],
+    "typology_tags": [
+      "pass_through",
+      "expired_kyc",
+      "incomplete_ubo",
+      "screening_unavailable"
+    ]
+  }
+]

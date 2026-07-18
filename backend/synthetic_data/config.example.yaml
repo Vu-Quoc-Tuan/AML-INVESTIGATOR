@@ -1,0 +1,43 @@
+# Example configuration for the synthetic banking data generator.
+# CLI flags override these when you wire a YAML loader; defaults live in config.py.
+
+random_seed: 42
+n_customers: 2000
+n_companies: 50
+n_transactions: 40000
+n_external_accounts: 1000
+min_accounts: 2500
+max_accounts: 3000
+window_days: 90
+base_currency: VND
+output_dir: ./data/generated
+
+# SHB-centric transaction mix. Cross-border is a subset of inbound/outbound.
+home_bank_id: BANK-SHB-001
+internal_transaction_ratio: 0.45
+inbound_transaction_ratio: 0.275
+outbound_transaction_ratio: 0.275
+cross_border_ratio: 0.05
+
+# Timeline (UTC)
+world_end: "2025-12-31T23:59:59+00:00"
+
+# Scenarios
+n_suspicious_scenarios: 3
+n_lookalike_scenarios: 3
+inject_incomplete_evidence: true
+
+# External reference institutions (fictitious; SHB does not own their ledgers)
+domestic_bank_ids:
+  - BANK-VCB-EXT
+  - BANK-TCB-EXT
+  - BANK-MBB-EXT
+  - BANK-ACB-EXT
+  - BANK-VPB-EXT
+crypto_platform_bank_id: BANK-CRYPTO-DEMO-99
+high_risk_foreign_bank_id: BANK-FOREIGN-HR-88
+high_risk_foreign_country: CY
+normal_foreign_countries: [SG, CN, US, JP, KR, DE]
+
+run_validation: true
+write_manifest: true
