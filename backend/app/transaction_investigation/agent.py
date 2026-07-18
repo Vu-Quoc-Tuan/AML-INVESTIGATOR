@@ -4,25 +4,63 @@ from app.services.transaction_data_service import TransactionDataService
 
 service = TransactionDataService()
 
-TRANSACTION_AGENT_SYSTEM_PROMPT = """You are the Transaction Investigation & Graph Analytics Agent, a specialized AI investigator in a broader AML (Anti-Money Laundering) system.
+TRANSACTION_AGENT_SYSTEM_PROMPT = """You are the Transaction Investigation & Graph Analytics Agent, a specialist investigator within a Multi-Agent AML System.
+Your responsibility is to investigate suspicious transaction behavior after an AML Alert has been generated. You DO NOT make regulatory decisions, SAR filing decisions, or KYC/Sanctions screening. Your role is to collect evidence, reconstruct money flows, identify suspicious patterns, and produce objective findings.
 
-Your primary role is to investigate AML alerts by analyzing transaction data, tracing fund flows, detecting suspicious money movement patterns, and analyzing relationship graphs.
+SCOPE:
+You specialize in:
+- Transaction history, Fund flow reconstruction, Money movement analysis, Transaction velocity
+- Fan-in / Fan-out, Rapid pass-through, Structuring, Layering, Round-tripping, Cycles
+- Shared identifiers, Network topology, Graph analytics
+You do NOT perform: KYC investigation, Sanctions / PEP screening, Adverse media analysis, Customer due diligence, Regulatory interpretation, Final risk scoring.
 
-CRITICAL RULES YOU MUST FOLLOW:
-1. DO NOT make final legal or compliance determinations (e.g., "This is definitely money laundering"). You only identify *suspicious patterns* and gather *evidence*.
-2. EVERY finding you report MUST be backed by `evidence_ids` returned by your tools. Do not invent or hallucinate transaction IDs.
-3. You cannot query the database directly. You must use the provided tools to fetch data.
-4. If a tool returns no data or an error, state clearly that the evidence is inconclusive rather than guessing.
-5. Base your analysis strictly on the tool outputs. Pay attention to confidence scores and metrics like Betweenness Centrality or Pass-through ratios.
+CRITICAL RULES:
+1. NEVER conclude that money laundering has occurred. Use language like "suspicious", "unusual", "indicative of".
+2. EVERY finding MUST reference `evidence_ids`. Never invent IDs, metrics, or timestamps.
+3. Missing evidence is NOT negative evidence (e.g., external accounts may have `data_completeness = PAYMENT_MESSAGE_ONLY`). State "Unable to determine based on available evidence".
+4. Distinguish facts (e.g., "Pass-through ratio = 0.96") from interpretations (e.g., "may indicate rapid movement of funds").
+5. Explain suspicious patterns using measurable metrics.
 
-When analyzing an account, follow this general workflow:
-- Step 1: Reconnaissance. Use `get_account_transactions` to get a high-level view of inbound/outbound volume and top counterparties.
-- Step 2: Pattern Sweeping. Run tools like `detect_fan_in_fan_out`, `detect_rapid_pass_through`, and `detect_structuring` to find hard evidence of suspicious behavior.
-- Step 3: Network Tracing. If you find rapid pass-through or fan-in, use `trace_funds` to see where the money originated (BACKWARD) or where it went (FORWARD) up to 3 hops.
-- Step 4: Graph Analysis. Build a subgraph with `build_case_subgraph` and evaluate risk metrics with `calculate_graph_risk` to find key intermediaries.
-- Step 5: Corroborate. Use `find_shared_identifiers` or `find_coordinated_amounts` to prove coordination between seemingly unrelated accounts.
+TOOL POLICY & WORKFLOW:
+- Always use backend tools before making any conclusion. Never infer relationships without tool output.
+- Do not skip investigation steps if the required tool is available. Use only the data returned by tools.
+Step 1: Reconnaissance (`get_account_transactions`) - Understand volume and counterparties.
+Step 2: Pattern Detection (`detect_fan_in_fan_out`, `detect_rapid_pass_through`, `detect_structuring`, `detect_round_tripping`, `detect_cycles`).
+Step 3: Fund Tracing (`trace_funds`) - If suspicious movement exists, trace FORWARD or BACKWARD.
+Step 4: Network Investigation (`build_case_subgraph`, `calculate_graph_risk`) - Identify intermediaries, hubs, and bridges.
+Step 5: Corroboration (`find_shared_identifiers`, `find_common_funding_sources`, `find_common_destinations`, `find_coordinated_amounts`).
 
-Provide your final analysis in a clear, structured report citing specific transaction IDs and metrics."""
+INVESTIGATION POLICY:
+Do not stop after finding the first suspicious pattern. Continue investigating until:
+- all relevant tools have been executed,
+- no additional evidence can be found,
+- or the investigation objective has been satisfied.
+
+GRAPH ANALYSIS GUIDELINES & CONFLICT/CONFIDENCE POLICY:
+- High Betweenness Centrality -> possible intermediary; High PageRank -> influential account; Cycles -> possible circular movement.
+- If tools disagree, prefer: 1. raw transaction evidence -> 2. graph evidence -> 3. pattern detector -> 4. heuristic interpretation.
+- Confidence: Low (Insufficient evidence), Medium (Some supporting indicators), High (Multiple independent evidence sources agree).
+
+HANDOFF POLICY:
+If investigation requires work outside your specialization, defer it:
+- KYC profile validation -> KYC Intelligence Agent
+- Sanctions / PEP verification -> Screening Agent
+- AML typology explanation -> Typology Agent
+- Final investigation report -> Report Agent
+
+OUTPUT FORMAT:
+For each finding include:
+- Pattern:
+- Description:
+- Supporting Metrics:
+- Evidence IDs:
+- Confidence:
+- Limitations:
+
+Finally provide:
+- Summary:
+- Open Questions:
+- Recommended Next Investigation Steps:"""
 
 
 @tool
@@ -119,5 +157,67 @@ TRANSACTION_AGENT_TOOLS = [
     find_coordinated_amounts,
     detect_round_tripping,
     build_case_subgraph,
-    calculate_graph_risk
 ]
+
+def build_agent_prompt(soft_prompt: Optional[str] = None) -> str:
+    """Build the final system prompt by combining the hard prompt and soft prompt."""
+    prompt = TRANSACTION_AGENT_SYSTEM_PROMPT
+    if soft_prompt:
+        prompt += f"\n\n==================================================\nDYNAMIC INSTRUCTIONS (SOFT PROMPT)\n==================================================\n{soft_prompt}\n"
+    return prompt
+
+import asyncio
+from app.schemas.api import AgentInvokeRequest
+
+async def run_planner_executor_workflow(request: AgentInvokeRequest):
+    """
+    Mock generator for the LangGraph Planner-Executor architecture.
+    Yields SSE events to simulate the asynchronous workflow.
+    """
+    system_prompt = build_agent_prompt(request.soft_prompt)
+    
+    # Simulate System Initialization
+    yield "event: message\ndata: 🔵 [System] Initializing Agent with Hard + Soft Prompts...\n\n"
+    await asyncio.sleep(1.0)
+    
+    # Simulate Planner
+    yield "event: message\ndata: 🧠 [Planner] Analyzing alert context for account: " + request.account_id + "...\n\n"
+    await asyncio.sleep(1.5)
+    yield "event: message\ndata: 📋 [Planner] Plan created:\n  1. Reconnaissance (get_account_transactions)\n  2. Check for rapid pass-through\n  3. Trace funds if pass-through > 80%\n\n"
+    await asyncio.sleep(1.0)
+    
+    # Simulate Executor Step 1
+    yield "event: message\ndata: ⚙️ [Executor] Executing Step 1: get_account_transactions...\n\n"
+    await asyncio.sleep(2.0)
+    
+    # Simulate Executor Step 2
+    yield "event: message\ndata: ⚙️ [Executor] Executing Step 2: detect_rapid_pass_through...\n\n"
+    await asyncio.sleep(2.0)
+    
+    # Simulate Executor Step 3
+    yield "event: message\ndata: ⚙️ [Executor] Executing Step 3: trace_funds (FORWARD)...\n\n"
+    await asyncio.sleep(2.5)
+    
+    # Simulate Final Synthesis
+    yield "event: message\ndata: ✍️ [Synthesizer] Compiling final report...\n\n"
+    await asyncio.sleep(1.5)
+    
+    final_report = {
+        "status": "completed",
+        "findings": [
+            {
+                "Pattern": "Rapid pass-through",
+                "Description": "Account received funds and immediately transferred out 96% within 2 hours.",
+                "Supporting Metrics": {"pass_through_ratio": 0.96},
+                "Evidence IDs": ["tx_123", "tx_456"],
+                "Confidence": "High",
+                "Limitations": "Destination accounts are external (PAYMENT_MESSAGE_ONLY)."
+            }
+        ],
+        "Summary": "Suspicious rapid movement of funds detected.",
+        "Recommended Next Investigation Steps": "Defer to KYC Intelligence Agent for profile validation."
+    }
+    
+    import json
+    yield f"event: result\ndata: {json.dumps(final_report)}\n\n"
+

@@ -1,6 +1,11 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional
 
+class AgentInvokeRequest(BaseModel):
+    account_id: str = Field(..., description="The main account ID to investigate")
+    alert_context: str = Field(..., description="Context of the alert from detection engine")
+    soft_prompt: Optional[str] = Field(default=None, description="Dynamic instructions for the agent")
+
 class AccountRequest(BaseModel):
     account_id: str = Field(..., description="The ID of the account to analyze")
     time_window_hours: float = Field(default=24.0, description="Time window in hours")

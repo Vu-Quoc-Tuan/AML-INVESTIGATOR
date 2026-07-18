@@ -1,17 +1,31 @@
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from app.services.transaction_data_service import TransactionDataService
 from app.schemas.api import (
+    AgentInvokeRequest,
     AccountRequest,
     MultiAccountRequest,
     TraceFundsRequest,
     GraphRiskRequest,
     SubgraphRequest
 )
+from app.transaction_investigation.agent import run_planner_executor_workflow
 
-router = APIRouter(prefix="/api/v1/agent/transaction", tags=["Transaction Agent Tools"])
+router = APIRouter(tags=["Transaction Agent Tools"])
 
 def get_service():
     return TransactionDataService()
+
+@router.post("/invoke")
+async def invoke_agent(req: AgentInvokeRequest):
+    """
+    Triggers the Planner-Executor LangGraph workflow asynchronously.
+    Returns Server-Sent Events (SSE) detailing the agent's thought process.
+    """
+    return StreamingResponse(
+        run_planner_executor_workflow(req), 
+        media_type="text/event-stream"
+    )
 
 @router.post("/detect-fan-in-out")
 def detect_fan_in_out(req: AccountRequest, service: TransactionDataService = Depends(get_service)):

@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from app.data.config import RepositoryConfig
 from app.data.provider import initialize_data_repository
 from app.data.repository import DataRepository
-from app.api.routes import transaction_agent
+from app.api.router import api_router
 
 def initialize_backend(
     data_path: str | Path | None = None,
@@ -30,7 +30,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-app.include_router(transaction_agent.router)
+app.include_router(api_router, prefix="/api/v1")
 
 @app.get("/")
 def read_root():
