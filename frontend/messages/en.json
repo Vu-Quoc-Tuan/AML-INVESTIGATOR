@@ -1,0 +1,129 @@
+{
+  "Metadata": {
+    "title": "AML-Investigator | Anti-Money Laundering Investigation",
+    "description": "AI-powered Anti-Money Laundering Investigation Platform"
+  },
+  "Common": {
+    "globalSearch": "Search accounts, cases"
+  },
+  "Accessibility": {
+    "languageSwitcher": "Select language",
+    "mainNavigation": "Main navigation",
+    "mobileNavigation": "Mobile navigation",
+    "notifications": "Notifications",
+    "userAvatar": "User avatar"
+  },
+  "Navigation": {
+    "dashboard": "Dashboard",
+    "history": "Suspicious history",
+    "workflow": "Agent workflow",
+    "monitoring": "Monitoring",
+    "settings": "Agent settings"
+  },
+  "Status": {
+    "pending": "Pending",
+    "checking": "Checking",
+    "reject": "Rejected",
+    "safety": "Safe",
+    "approve": "Approved"
+  },
+  "AgentState": {
+    "idle": "Idle",
+    "thinking": "Thinking",
+    "working": "Working",
+    "completed": "Completed"
+  },
+  "Agents": {
+    "statusLabel": "Status",
+    "planner": {"name": "Planner Agent", "action": "Prioritizing suspicious clusters"},
+    "transaction": {"name": "Transaction Agent", "action": "Tracing fund flow across accounts"},
+    "report": {"name": "Report Agent", "action": "Waiting for case evidence"},
+    "kyc": {"name": "KYC Agent", "action": "Validated beneficial ownership graph"}
+  },
+  "Dashboard": {
+    "title": "AML-Investigator",
+    "subtitle": "AI-powered Anti-Money Laundering Investigation Platform",
+    "stats": {
+      "pending": {"title": "Pending", "description": "Investigations awaiting triage"},
+      "checking": {"title": "Checking", "description": "AI agents actively reviewing"},
+      "reject": {"title": "Rejected", "description": "Cases rejected after review"},
+      "approve": {"title": "Approved", "description": "Cases approved and archived"}
+    },
+    "days": {"mon": "Mon", "tue": "Tue", "wed": "Wed", "thu": "Thu", "fri": "Fri", "sat": "Sat", "sun": "Sun"},
+    "chart": {
+      "title": "Transaction Flow Trends",
+      "description": "Volume and flagged transaction patterns across the current week.",
+      "volume": "Transaction Volume",
+      "flagged": "Flagged Transactions"
+    }
+  },
+  "History": {
+    "title": "Suspicious history",
+    "subtitle": "Review suspicious investigations.",
+    "search": "Search investigations",
+    "filter": "Filter",
+    "export": "Export",
+    "columns": {"id": "Case ID", "status": "Status", "account": "Account Number", "action": "Action"},
+    "actions": {
+      "awaitingPlanner": "Awaiting planner review",
+      "tracingLayers": "Tracing layered transfers",
+      "releasedKyc": "Released by KYC match",
+      "manualReview": "Escalated for manual review",
+      "fanIn": "Detecting fan-in pattern",
+      "riskScoring": "Queued for risk scoring"
+    },
+    "detailsTitle": "Investigation details opened",
+    "detailsDescription": "{id} is ready for analyst review with transaction graph, KYC evidence, and agent rationale.",
+    "pagination": {"summary": "Showing {from}-{to} of {total} cases", "previous": "Previous", "next": "Next"}
+  },
+  "Workflow": {
+    "title": "Agent workflow",
+    "subtitle": "Visualize how AI agents collaborate across AML investigations.",
+    "activeAgents": "Active Agents",
+    "recentActions": "Recent Actions",
+    "activity": {
+      "fetchingHistory": "Fetching transaction history...",
+      "prioritizingRisk": "Prioritizing entity risk clusters...",
+      "routingAccounts": "Routing high-velocity accounts...",
+      "tracingFunds": "Tracing fund flow...",
+      "detectingFanIn": "Detecting fan-in...",
+      "calculatingMetrics": "Calculating graph metrics...",
+      "reportOutline": "Generating report outline...",
+      "evidenceSummary": "Attaching evidence summary...",
+      "plannerApproval": "Waiting for planner approval...",
+      "matchingOwners": "Matching beneficial owners...",
+      "screeningAliases": "Screening sanctions aliases...",
+      "identityScore": "Completing identity confidence score..."
+    }
+  },
+  "Monitoring": {
+    "title": "Agent Monitoring",
+    "subtitle": "Operational health, resource utilization, and throughput across active AML agents.",
+    "agentStatus": "Agent status: {status}",
+    "healthy": "Healthy",
+    "health": "Health",
+    "latency": "Latency",
+    "tasks": "Tasks processed",
+    "currentAction": "Current action",
+    "utilization": "Resource utilization",
+    "restart": "Restart",
+    "exportLogs": "Export logs"
+  },
+  "Settings": {
+    "title": "Agent settings",
+    "subtitle": "Tune system instructions, model depth, and execution model for investigation agents.",
+    "systemPrompt": {
+      "title": "Edit system prompt",
+      "placeholder": "Enter system prompt...",
+      "reset": "Reset",
+      "save": "Save configuration"
+    },
+    "modelLevel": {
+      "title": "Model level",
+      "light": {"name": "Light", "description": "Fast checks for low-risk queues."},
+      "medium": {"name": "Medium", "description": "Balanced reasoning for daily review."},
+      "strong": {"name": "Strong", "description": "Deep multi-hop analysis for escalation."}
+    },
+    "availableModels": "Available models"
+  }
+}
