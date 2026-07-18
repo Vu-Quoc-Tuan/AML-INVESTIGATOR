@@ -91,7 +91,9 @@ jobs:
         working-directory: frontend
         run: |
           set -euo pipefail
-          url="$(vercel deploy --prebuilt --prod --token="${{ secrets.VERCEL_TOKEN }}")"
+          # Vercel project rootDirectory must be empty (not "frontend") because
+          # this job already runs inside ./frontend.
+          url="$(vercel deploy --prebuilt --prod --yes --token="${{ secrets.VERCEL_TOKEN }}")"
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Deployed: $url"
 
