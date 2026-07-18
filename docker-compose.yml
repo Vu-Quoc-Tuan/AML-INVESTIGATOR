@@ -9,3 +9,18 @@ services:
       NODE_ENV: production
       NEXT_TELEMETRY_DISABLED: "1"
       HOSTNAME: "0.0.0.0"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: aml-investigator-backend:local
+    restart: always
+    ports:
+      - target: 8000
+        published: 8000
+        protocol: tcp
+        mode: host
+        host_ip: 127.0.0.1
+    environment:
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}

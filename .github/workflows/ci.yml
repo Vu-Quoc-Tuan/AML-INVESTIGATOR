@@ -1,0 +1,233 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "24"
+
+jobs:
+  detect-frontend:
+    name: Detect frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      exists: ${{ steps.frontend.outputs.exists }}
+      package_manager: ${{ steps.frontend.outputs.package_manager }}
+      lockfile: ${{ steps.frontend.outputs.lockfile }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Detect package manager
+        id: frontend
+        shell: bash
+        run: |
+          if [[ ! -f frontend/package.json ]]; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Frontend is not implemented yet; frontend-check will be skipped."
+            exit 0
+          fi
+
+          shopt -s nullglob
+          lockfiles=(
+            frontend/package-lock.json
+            frontend/pnpm-lock.yaml
+            frontend/yarn.lock
+          )
+
+          if (( ${#lockfiles[@]} != 1 )); then
+            echo "::error::frontend/package.json requires exactly one supported lockfile: package-lock.json, pnpm-lock.yaml, or yarn.lock"
+            exit 1
+          fi
+
+          case "${lockfiles[0]}" in
+            frontend/package-lock.json) package_manager="npm" ;;
+            frontend/pnpm-lock.yaml) package_manager="pnpm" ;;
+            frontend/yarn.lock) package_manager="yarn" ;;
+          esac
+
+          echo "exists=true" >> "$GITHUB_OUTPUT"
+          echo "package_manager=$package_manager" >> "$GITHUB_OUTPUT"
+          echo "lockfile=${lockfiles[0]}" >> "$GITHUB_OUTPUT"
+
+  backend-lint:
+    name: Backend lint and compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install --requirement backend/requirements.txt --requirement backend/requirements-dev.txt
+
+      - name: Run Ruff
+        run: make backend-lint
+
+      - name: Compile and import backend
+        run: make backend-compile
+
+  backend-test:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install --requirement backend/requirements.txt --requirement backend/requirements-dev.txt
+
+      - name: Run backend tests
+        run: make backend-test
+
+  frontend-check:
+    name: Frontend lint, test, and build
+    needs: detect-frontend
+    if: needs.detect-frontend.outputs.exists == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI: "true"
+      PACKAGE_MANAGER: ${{ needs.detect-frontend.outputs.package_manager }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
+      - name: Enable Corepack for pnpm or Yarn
+        if: env.PACKAGE_MANAGER != 'npm'
+        run: corepack enable
+
+      - name: Resolve package cache directory
+        id: package-cache
+        working-directory: frontend
+        shell: bash
+        run: |
+          case "$PACKAGE_MANAGER" in
+            npm)
+              cache_path="$(npm config get cache)"
+              ;;
+            pnpm)
+              pnpm --version
+              cache_path="$(pnpm store path --silent)"
+              ;;
+            yarn)
+              yarn --version
+              cache_path="$(yarn config get cacheFolder 2>/dev/null || yarn cache dir)"
+              ;;
+          esac
+          echo "path=$cache_path" >> "$GITHUB_OUTPUT"
+
+      - name: Cache frontend packages
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.package-cache.outputs.path }}
+          key: ${{ runner.os }}-node-${{ env.PACKAGE_MANAGER }}-${{ hashFiles('frontend/package-lock.json', 'frontend/pnpm-lock.yaml', 'frontend/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-node-${{ env.PACKAGE_MANAGER }}-
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        shell: bash
+        run: |
+          case "$PACKAGE_MANAGER" in
+            npm) npm ci ;;
+            pnpm) pnpm install --frozen-lockfile ;;
+            yarn)
+              if [[ "$(yarn --version)" == 1.* ]]; then
+                yarn install --frozen-lockfile
+              else
+                yarn install --immutable
+              fi
+              ;;
+          esac
+
+      - name: Validate required frontend scripts
+        working-directory: frontend
+        run: |
+          node -e "const scripts=require('./package.json').scripts||{}; const missing=['lint','build'].filter(name => !scripts[name]); if (missing.length) { console.error('Missing required frontend scripts: '+missing.join(', ')); process.exit(1); }"
+
+      - name: Run frontend lint
+        working-directory: frontend
+        run: $PACKAGE_MANAGER run lint
+
+      - name: Run frontend tests
+        working-directory: frontend
+        run: |
+          if node -e "const s=require('./package.json').scripts; process.exit(s && s.test ? 0 : 1)"; then
+            $PACKAGE_MANAGER run test
+          else
+            echo "No test script found in package.json, skipping."
+          fi
+
+      - name: Build frontend
+        working-directory: frontend
+        run: $PACKAGE_MANAGER run build
+
+  docker-build:
+    name: Docker configuration and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate Docker Compose
+        run: docker compose -f docker-compose.yml config --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build backend image without pushing
+        uses: docker/build-push-action@v7
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: false
+          load: true
+          tags: aml-investigator-backend:ci
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Smoke-test packaged backend
+        run: >-
+          docker run --rm aml-investigator-backend:ci
+          python -c "from app.main import initialize_backend; initialize_backend(); print('Container smoke test passed')"
