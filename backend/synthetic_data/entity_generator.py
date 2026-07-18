@@ -28,6 +28,7 @@ from synthetic_data.models import (
     Company,
     Customer,
     EntityType,
+    ExternalAccount,
     KYCDocument,
     KYCProfile,
     RiskLevel,
@@ -419,7 +420,7 @@ def generate_account(
 ) -> Account:
     """Create an account. Raises if final account cap would be exceeded."""
     cfg = world.config
-    total = len(world.accounts) + len(world.demo_accounts)
+    total = len(world.accounts)
     if total >= cfg.max_accounts:
         raise RuntimeError(
             f"Account cap reached ({cfg.max_accounts}); cannot create more accounts"
@@ -449,7 +450,7 @@ def generate_account(
     if initial_balance is None:
         initial_balance = rng.randint(spec.initial_balance_min, spec.initial_balance_max)
 
-    bank_id = bank_id or _pick(rng, cfg.domestic_bank_ids)
+    bank_id = cfg.home_bank_id
     account = Account(
         account_id=world.ids.account(),
         owner_entity_id=owner_entity_id,
@@ -470,128 +471,169 @@ def generate_account(
 
 
 def create_banks_catalog(world: WorldState) -> None:
-    """Exportable bank / external-entity catalog with explicit risk scores."""
+    """Create one SHB home bank and external reference institutions."""
     cfg = world.config
+    world.banks[cfg.home_bank_id] = Bank(
+        bank_id=cfg.home_bank_id,
+        bank_name="SHB",
+        bank_type="DOMESTIC",
+        country_code="VN",
+        is_home_bank=True,
+        risk_score=5.0,
+        swift_code="SHBAVNVX",
+    )
     domestic_names = {
-        "BANK-VCB-001": "Ngan hang Demo Vietcom",
-        "BANK-TCB-002": "Ngan hang Demo Tech",
-        "BANK-MBB-003": "Ngan hang Demo Military",
-        "BANK-ACB-004": "Ngan hang Demo Asia",
-        "BANK-VPB-005": "Ngan hang Demo VP",
+        "BANK-VCB-EXT": "Domestic Demo Vietcom",
+        "BANK-TCB-EXT": "Domestic Demo Tech",
+        "BANK-MBB-EXT": "Domestic Demo Military",
+        "BANK-ACB-EXT": "Domestic Demo Asia",
+        "BANK-VPB-EXT": "Domestic Demo VP",
     }
-    for bank_id in cfg.domestic_bank_ids:
+    for index, bank_id in enumerate(cfg.domestic_bank_ids, start=1):
         world.banks[bank_id] = Bank(
             bank_id=bank_id,
-            bank_entity_id=f"ENT-{bank_id}",
-            legal_name=domestic_names.get(bank_id, f"Demo Domestic Bank {bank_id}"),
-            country="VN",
+            bank_name=domestic_names.get(bank_id, f"Demo Domestic Bank {bank_id}"),
+            bank_type="DOMESTIC",
+            country_code="VN",
+            is_home_bank=False,
             risk_score=round(world.rng.uniform(5.0, 25.0), 2),
-            is_demo=True,
-            bank_type="COMMERCIAL",
+            swift_code=f"DEXT{index:02d}VN",
         )
     world.banks[cfg.crypto_platform_bank_id] = Bank(
         bank_id=cfg.crypto_platform_bank_id,
-        bank_entity_id="ENT-CRYPTO-PLATFORM-DEMO",
-        legal_name="Crypto Platform Demo Exchange",
-        country="XX",
+        bank_name="Crypto Platform Demo Exchange",
+        bank_type="VASP",
+        country_code="XX",
+        is_home_bank=False,
         risk_score=88.5,
-        is_demo=True,
-        bank_type="CRYPTO_PLATFORM",
+        swift_code="CRYPDEMO99",
     )
     world.banks[cfg.high_risk_foreign_bank_id] = Bank(
         bank_id=cfg.high_risk_foreign_bank_id,
-        bank_entity_id="ENT-FOREIGN-HR-BANK",
-        legal_name="High Risk Foreign Demo Bank",
-        country=cfg.high_risk_foreign_country,
+        bank_name="High Risk Foreign Demo Bank",
+        bank_type="FOREIGN",
+        country_code=cfg.high_risk_foreign_country,
+        is_home_bank=False,
         risk_score=92.0,
-        is_demo=True,
-        bank_type="FOREIGN_CORRESPONDENT",
+        swift_code="HRISKDEMO88",
     )
-    for country in cfg.normal_foreign_countries:
+    for index, country in enumerate(cfg.normal_foreign_countries, start=1):
         bank_id = f"BANK-FOREIGN-{country}-DEMO"
         world.banks[bank_id] = Bank(
             bank_id=bank_id,
-            bank_entity_id=f"ENT-FOREIGN-{country}-BANK",
-            legal_name=f"Demo {country} Correspondent Bank",
-            country=country,
+            bank_name=f"Demo {country} Correspondent Bank",
+            bank_type="FOREIGN",
+            country_code=country,
+            is_home_bank=False,
             risk_score=round(world.rng.uniform(15.0, 45.0), 2),
-            is_demo=True,
-            bank_type="FOREIGN_CORRESPONDENT",
+            swift_code=f"FEXT{index:02d}{country}",
         )
 
 
-def create_demo_external_accounts(world: WorldState) -> None:
-    """Materialise valid external counterpart accounts (no system float)."""
+def _external_account(
+    world: WorldState,
+    *,
+    external_account_id: str,
+    bank_id: str,
+    name: str,
+    counterparty_type: str,
+    identifier_type: str = "NAME_ONLY",
+    identifier_value: Optional[str] = None,
+    risk_score: Optional[float] = None,
+) -> ExternalAccount:
+    bank = world.banks[bank_id]
+    account = ExternalAccount(
+        external_account_id=external_account_id,
+        masked_account_number=f"****{world.rng.randint(1000, 9999)}",
+        bank_id=bank_id,
+        country_code=bank.country_code,
+        counterparty_name=name,
+        counterparty_type=counterparty_type,
+        available_identifier_type=identifier_type,
+        available_identifier_value=identifier_value,
+        risk_score=round(risk_score if risk_score is not None else bank.risk_score / 100, 3),
+    )
+    world.external_accounts[external_account_id] = account
+    return account
+
+
+def generate_external_accounts(world: WorldState) -> None:
+    """Generate limited counterparties observed through SHB payment messages."""
     cfg = world.config
-    crypto = Account(
-        account_id="ACCT-CRYPTO-DEMO-001",
-        owner_entity_id="ENT-CRYPTO-PLATFORM-DEMO",
-        owner_entity_type=EntityType.BANK,
-        account_type=AccountType.BUSINESS_CURRENT,
-        currency=cfg.base_currency,
-        opened_at=cfg.world_start - timedelta(days=400),
-        status=AccountStatus.ACTIVE,
-        home_branch="CRYPTO-DEMO",
-        initial_balance=50_000_000_000_000,
+    _external_account(
+        world,
+        external_account_id="EXT-ACC-CRYPTO-001",
         bank_id=cfg.crypto_platform_bank_id,
+        name="CRYPTO PLATFORM DEMO EXCHANGE",
+        counterparty_type="VASP",
+        identifier_type="VASP_REGISTRATION",
+        identifier_value="VASP-DEMO-001",
+        risk_score=0.885,
     )
-    foreign = Account(
-        account_id="ACCT-FOREIGN-HR-001",
-        owner_entity_id="ENT-FOREIGN-HR-BANK",
-        owner_entity_type=EntityType.BANK,
-        account_type=AccountType.BUSINESS_CURRENT,
-        currency=cfg.base_currency,
-        opened_at=cfg.world_start - timedelta(days=800),
-        status=AccountStatus.ACTIVE,
-        home_branch="FOREIGN-HR",
-        initial_balance=50_000_000_000_000,
+    _external_account(
+        world,
+        external_account_id="EXT-ACC-HR-001",
         bank_id=cfg.high_risk_foreign_bank_id,
+        name="GLOBAL TRADE HOLDINGS DEMO",
+        counterparty_type="COMPANY",
+        identifier_type="REGISTRATION_NUMBER",
+        identifier_value="REG-DEMO-8911",
+        risk_score=0.92,
     )
-    external_accounts = [crypto, foreign]
+    _external_account(
+        world,
+        external_account_id="EXT-ACC-SETTLEMENT-001",
+        bank_id=cfg.domestic_bank_ids[0],
+        name="SHB INTERBANK SETTLEMENT COUNTERPARTY",
+        counterparty_type="COMPANY",
+        identifier_type="BANK_DIRECTORY",
+        identifier_value=cfg.domestic_bank_ids[0],
+        risk_score=0.1,
+    )
     for country in cfg.normal_foreign_countries:
-        external_accounts.append(
-            Account(
-                account_id=f"ACCT-FOREIGN-{country}-001",
-                owner_entity_id=f"ENT-FOREIGN-{country}-BANK",
-                owner_entity_type=EntityType.BANK,
-                account_type=AccountType.BUSINESS_CURRENT,
-                currency=cfg.base_currency,
-                opened_at=cfg.world_start - timedelta(days=800),
-                status=AccountStatus.ACTIVE,
-                home_branch=f"FOREIGN-{country}",
-                initial_balance=50_000_000_000_000,
-                bank_id=f"BANK-FOREIGN-{country}-DEMO",
-            )
+        _external_account(
+            world,
+            external_account_id=f"EXT-ACC-FOREIGN-{country}-001",
+            bank_id=f"BANK-FOREIGN-{country}-DEMO",
+            name=f"DEMO {country} COUNTERPARTY",
+            counterparty_type="COMPANY",
+            identifier_type="NAME_ONLY",
         )
-    for bank_id in cfg.domestic_bank_ids:
-        external_accounts.append(
-            Account(
-                account_id=f"ACCT-SETTLEMENT-{bank_id.removeprefix('BANK-')}",
-                owner_entity_id=f"ENT-{bank_id}",
-                owner_entity_type=EntityType.BANK,
-                account_type=AccountType.BUSINESS_CURRENT,
-                currency=cfg.base_currency,
-                opened_at=cfg.world_start - timedelta(days=1_000),
-                status=AccountStatus.ACTIVE,
-                home_branch="BANK-SETTLEMENT",
-                initial_balance=100_000_000_000_000,
-                bank_id=bank_id,
-            )
+
+    while len(world.external_accounts) < cfg.n_external_accounts:
+        external_id = world.ids.external_account()
+        use_foreign = world.rng.random() < 0.12
+        if use_foreign:
+            country = _pick(world.rng, cfg.normal_foreign_countries)
+            bank_id = f"BANK-FOREIGN-{country}-DEMO"
+        else:
+            bank_id = _pick(world.rng, cfg.domestic_bank_ids)
+        kind = "INDIVIDUAL" if world.rng.random() < 0.72 else "COMPANY"
+        sequence = len(world.external_accounts) + 1
+        _external_account(
+            world,
+            external_account_id=external_id,
+            bank_id=bank_id,
+            name=(
+                _fake_name(world.rng).upper()
+                if kind == "INDIVIDUAL"
+                else f"EXTERNAL DEMO COMPANY {sequence:04d}"
+            ),
+            counterparty_type=kind,
+            identifier_type="NAME_ONLY" if kind == "INDIVIDUAL" else "REGISTRATION_NUMBER",
+            identifier_value=None if kind == "INDIVIDUAL" else f"EXT-REG-{sequence:06d}",
         )
-    for acc in external_accounts:
-        world.demo_accounts[acc.account_id] = acc
-        world.balances[acc.account_id] = acc.initial_balance
 
 
 def _total_accounts(world: WorldState) -> int:
-    return len(world.accounts) + len(world.demo_accounts)
+    return len(world.accounts)
 
 
 def generate_entities(world: WorldState) -> None:
     """Phase 1: exact-quota customers/companies, accounts, KYC, banks."""
     cfg = world.config
     create_banks_catalog(world)
-    create_demo_external_accounts(world)
+    generate_external_accounts(world)
 
     # Exact customer quota (final export size)
     for _ in range(cfg.n_customers):

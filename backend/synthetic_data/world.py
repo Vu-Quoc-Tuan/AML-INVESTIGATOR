@@ -16,6 +16,7 @@ from synthetic_data.models import (
     CompanyOwnership,
     Customer,
     EntityRelationship,
+    ExternalAccount,
     GroundTruthScenario,
     KYCDocument,
     KYCProfile,
@@ -54,8 +55,8 @@ class WorldState:
     # Index: entity_id -> account_ids
     entity_accounts: dict[str, list[str]] = field(default_factory=dict)
 
-    # Demo external accounts (crypto platform, high-risk foreign bank)
-    demo_accounts: dict[str, Account] = field(default_factory=dict)
+    # Limited counterparties observed through SHB payment messages.
+    external_accounts: dict[str, ExternalAccount] = field(default_factory=dict)
 
     # Quota-first scenario bookkeeping
     scenario_used_customers: set[str] = field(default_factory=set)
@@ -74,9 +75,13 @@ class WorldState:
         )
 
     def get_account(self, account_id: str) -> Optional[Account]:
-        if account_id in self.accounts:
-            return self.accounts[account_id]
-        return self.demo_accounts.get(account_id)
+        return self.accounts.get(account_id)
+
+    def get_external_account(self, account_id: str) -> Optional[ExternalAccount]:
+        return self.external_accounts.get(account_id)
+
+    def get_account_reference(self, account_id: str) -> Optional[Account | ExternalAccount]:
+        return self.accounts.get(account_id) or self.external_accounts.get(account_id)
 
     def all_account_ids(self) -> list[str]:
-        return list(self.accounts.keys()) + list(self.demo_accounts.keys())
+        return list(self.accounts.keys()) + list(self.external_accounts.keys())

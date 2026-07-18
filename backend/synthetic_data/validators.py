@@ -12,11 +12,16 @@ from synthetic_data.models import (
     ACCOUNT_FEATURE_COLUMNS,
     COMPANY_FEATURE_COLUMNS,
     CUSTOMER_FEATURE_COLUMNS,
+    EXTERNAL_ACCOUNT_FEATURE_COLUMNS,
     TRANSACTION_FEATURE_COLUMNS,
+    AccountReferenceType,
+    DataVisibility,
     EntityType,
+    TransactionDirection,
     VerificationStatus,
 )
 from synthetic_data.profiles import PROFILE_SPECS
+from synthetic_data.ledger import strict_replay_ok
 from synthetic_data.world import WorldState
 
 
@@ -51,6 +56,8 @@ def validate_world(world: WorldState) -> ValidationResult:
     _check_profile_initial_balances(world, result)
     _check_balances(world, result)
     _check_normal_cross_border_mix(world, result)
+    _check_normal_direction_mix(world, result)
+    _check_external_seen_bounds(world, result)
     _check_ground_truth_tx_ids(world, result)
     _check_screening_dependencies(world, result)
     _check_feature_columns_clean(result)
@@ -67,7 +74,7 @@ def _check_quotas(world: WorldState, result: ValidationResult) -> None:
         result.fail(
             f"Company count {len(world.companies)} != configured {cfg.n_companies}"
         )
-    total_accounts = len(world.accounts) + len(world.demo_accounts)
+    total_accounts = len(world.accounts)
     if total_accounts < cfg.min_accounts:
         result.fail(
             f"Account count {total_accounts} below min_accounts {cfg.min_accounts}"
@@ -75,6 +82,11 @@ def _check_quotas(world: WorldState, result: ValidationResult) -> None:
     if total_accounts > cfg.max_accounts:
         result.fail(
             f"Account count {total_accounts} above max_accounts {cfg.max_accounts}"
+        )
+    if len(world.external_accounts) != cfg.n_external_accounts:
+        result.fail(
+            f"External account count {len(world.external_accounts)} != configured "
+            f"{cfg.n_external_accounts}"
         )
     if len(world.normal_transaction_ids) != cfg.n_transactions:
         result.fail(
@@ -87,7 +99,8 @@ def _check_duplicate_ids(world: WorldState, result: ValidationResult) -> None:
     collections: list[tuple[str, Iterable[str]]] = [
         ("customer", world.customers.keys()),
         ("company", world.companies.keys()),
-        ("account", list(world.accounts.keys()) + list(world.demo_accounts.keys())),
+        ("account", world.accounts.keys()),
+        ("external_account", world.external_accounts.keys()),
         ("transaction", world.transactions.keys()),
         ("kyc_profile", world.kyc_profiles.keys()),
         ("kyc_document", world.kyc_documents.keys()),
@@ -109,10 +122,10 @@ def _check_duplicate_ids(world: WorldState, result: ValidationResult) -> None:
 def _check_foreign_keys(world: WorldState, result: ValidationResult) -> None:
     customer_ids = set(world.customers)
     company_ids = set(world.companies)
-    bank_entity_ids = {bank.bank_entity_id for bank in world.banks.values()}
-    entity_ids = customer_ids | company_ids | bank_entity_ids
+    entity_ids = customer_ids | company_ids
     address_ids = set(world.addresses)
-    account_ids = set(world.accounts) | set(world.demo_accounts)
+    account_ids = set(world.accounts)
+    external_account_ids = set(world.external_accounts)
     doc_ids = set(world.kyc_documents)
     bank_ids = set(world.banks) or (
         set(world.config.domestic_bank_ids)
@@ -134,46 +147,72 @@ def _check_foreign_keys(world: WorldState, result: ValidationResult) -> None:
                 f"Company {co.company_id} representative missing: {co.representative_customer_id}"
             )
 
-    for a in list(world.accounts.values()) + list(world.demo_accounts.values()):
+    home_banks = [bank.bank_id for bank in world.banks.values() if bank.is_home_bank]
+    if home_banks != [world.config.home_bank_id]:
+        result.fail(f"Expected one SHB home bank, got {home_banks}")
+
+    for a in world.accounts.values():
         otype = a.owner_entity_type.value if hasattr(a.owner_entity_type, "value") else a.owner_entity_type
         if otype == "CUSTOMER" and a.owner_entity_id not in customer_ids:
             result.fail(f"Account {a.account_id} owner customer missing")
         if otype == "COMPANY" and a.owner_entity_id not in company_ids:
             result.fail(f"Account {a.account_id} owner company missing")
-        if otype == "BANK" and a.owner_entity_id not in bank_entity_ids:
-            result.fail(f"Account {a.account_id} bank owner missing: {a.owner_entity_id}")
         if a.bank_id not in bank_ids:
             result.fail(f"Account {a.account_id} bank_id not in catalog: {a.bank_id}")
+        if a.bank_id != world.config.home_bank_id:
+            result.fail(f"Internal account {a.account_id} is not owned by SHB")
+
+    for external in world.external_accounts.values():
+        if external.bank_id not in bank_ids:
+            result.fail(f"External account {external.account_id} bank_id missing")
+        if external.bank_id == world.config.home_bank_id:
+            result.fail(f"External account {external.account_id} uses home bank")
+        if external.account_id in world.balances:
+            result.fail(f"External account {external.account_id} has an internal balance")
 
     for t in world.transactions.values():
-        if t.source_account_id not in account_ids:
+        source_ids = account_ids if t.source_account_type == AccountReferenceType.INTERNAL_SHB else external_account_ids
+        destination_ids = account_ids if t.destination_account_type == AccountReferenceType.INTERNAL_SHB else external_account_ids
+        if t.source_account_ref not in source_ids:
             result.fail(f"Txn {t.transaction_id} source account missing")
-        if t.destination_account_id not in account_ids:
+        if t.destination_account_ref not in destination_ids:
             result.fail(f"Txn {t.transaction_id} dest account missing")
         if t.source_bank_id not in bank_ids:
             result.fail(f"Txn {t.transaction_id} source_bank_id missing from catalog")
         if t.destination_bank_id not in bank_ids:
             result.fail(f"Txn {t.transaction_id} destination_bank_id missing from catalog")
-        src = world.get_account(t.source_account_id)
-        dst = world.get_account(t.destination_account_id)
+        src = world.get_account_reference(t.source_account_ref)
+        dst = world.get_account_reference(t.destination_account_ref)
         if src is not None and t.source_bank_id != src.bank_id:
             result.fail(f"Txn {t.transaction_id} source_bank_id mismatches source account")
         if dst is not None and t.destination_bank_id != dst.bank_id:
             result.fail(f"Txn {t.transaction_id} destination_bank_id mismatches destination account")
         if dst is not None and dst.bank_id in world.banks:
-            expected_country = world.banks[dst.bank_id].country
+            expected_country = world.banks[dst.bank_id].country_code
             if t.destination_country != expected_country:
                 result.fail(
                     f"Txn {t.transaction_id} destination_country {t.destination_country} "
                     f"!= destination bank country {expected_country}"
                 )
         if src is not None and dst is not None:
-            src_country = world.banks[src.bank_id].country
-            dst_country = world.banks[dst.bank_id].country
+            src_country = world.banks[src.bank_id].country_code
+            dst_country = world.banks[dst.bank_id].country_code
             if t.is_cross_border != (src_country != dst_country):
                 result.fail(
                     f"Txn {t.transaction_id} cross-border flag inconsistent with bank countries"
                 )
+        topology = (t.source_account_type, t.destination_account_type)
+        expected_direction = {
+            (AccountReferenceType.INTERNAL_SHB, AccountReferenceType.INTERNAL_SHB): TransactionDirection.INTERNAL,
+            (AccountReferenceType.EXTERNAL, AccountReferenceType.INTERNAL_SHB): TransactionDirection.INBOUND,
+            (AccountReferenceType.INTERNAL_SHB, AccountReferenceType.EXTERNAL): TransactionDirection.OUTBOUND,
+        }.get(topology)
+        if expected_direction is None or t.direction != expected_direction:
+            result.fail(f"Txn {t.transaction_id} has invalid SHB topology/direction")
+        if t.direction == TransactionDirection.INBOUND and (t.source_ip or t.device_id):
+            result.fail(f"Inbound txn {t.transaction_id} has external device/IP")
+        if t.direction == TransactionDirection.INTERNAL and t.data_visibility != DataVisibility.FULL_INTERNAL:
+            result.fail(f"Internal txn {t.transaction_id} lacks full visibility")
 
     for o in world.ownerships.values():
         if o.owned_company_id not in company_ids:
@@ -208,8 +247,8 @@ def _check_missing_account_owners(world: WorldState, result: ValidationResult) -
 
 def _check_timestamps(world: WorldState, result: ValidationResult) -> None:
     for t in world.transactions.values():
-        src = world.get_account(t.source_account_id)
-        dst = world.get_account(t.destination_account_id)
+        src = world.get_account(t.source_account_ref)
+        dst = world.get_account(t.destination_account_ref)
         if src and t.occurred_at < src.opened_at:
             result.fail(
                 f"Txn {t.transaction_id} before source account open "
@@ -349,7 +388,7 @@ def _check_transaction_amounts(world: WorldState, result: ValidationResult) -> N
 
 
 def _check_no_system_float(world: WorldState, result: ValidationResult) -> None:
-    if "ACCT-SYSTEM-FLOAT-001" in world.accounts or "ACCT-SYSTEM-FLOAT-001" in world.demo_accounts:
+    if "ACCT-SYSTEM-FLOAT-001" in world.accounts or "ACCT-SYSTEM-FLOAT-001" in world.external_accounts:
         result.fail("SYSTEM float account must not be present in generated world")
     for t in world.transactions.values():
         if "SYSTEM" in t.source_account_id or "SYSTEM" in t.destination_account_id:
@@ -376,46 +415,11 @@ def _check_profile_initial_balances(world: WorldState, result: ValidationResult)
 
 def _check_balances(world: WorldState, result: ValidationResult) -> None:
     """Strict ledger replay: initial_balance + transactions must never go illegal-negative."""
-    balances: dict[str, int] = {}
-    for a in world.accounts.values():
-        balances[a.account_id] = a.initial_balance
-    for a in world.demo_accounts.values():
-        balances[a.account_id] = a.initial_balance
-
-    txns = sorted(
-        world.transactions.values(),
-        key=lambda t: (t.occurred_at, t.transaction_id),
-    )
-    neg_events = 0
-    for t in txns:
-        src = t.source_account_id
-        dst = t.destination_account_id
-        if src not in balances:
-            balances[src] = 0
-        if dst not in balances:
-            balances[dst] = 0
-        balances[src] -= t.amount
-        balances[dst] += t.amount
-        acc = world.get_account(src)
-        if acc is None:
-            continue
-        if acc.allow_overdraft:
-            if balances[src] < -acc.overdraft_limit:
-                neg_events += 1
-                if neg_events <= 5:
-                    result.fail(
-                        f"Replay overdraft exceeded for {src} at {t.transaction_id}: "
-                        f"{balances[src]}"
-                    )
-        elif balances[src] < 0:
-            neg_events += 1
-            if neg_events <= 5:
-                result.fail(
-                    f"Replay negative balance for {src} at {t.transaction_id}: "
-                    f"{balances[src]}"
-                )
-    if neg_events > 5:
-        result.fail(f"... and {neg_events - 5} more ledger negative events")
+    errors = strict_replay_ok(world)
+    for error in errors[:5]:
+        result.fail(f"Replay negative balance for {error}")
+    if len(errors) > 5:
+        result.fail(f"... and {len(errors) - 5} more ledger negative events")
 
 
 def _check_normal_cross_border_mix(world: WorldState, result: ValidationResult) -> None:
@@ -437,6 +441,62 @@ def _check_normal_cross_border_mix(world: WorldState, result: ValidationResult) 
         )
 
 
+def _check_normal_direction_mix(world: WorldState, result: ValidationResult) -> None:
+    ratios = {
+        TransactionDirection.INTERNAL: world.config.internal_transaction_ratio,
+        TransactionDirection.INBOUND: world.config.inbound_transaction_ratio,
+        TransactionDirection.OUTBOUND: world.config.outbound_transaction_ratio,
+    }
+    raw = {
+        direction: world.config.n_transactions * ratio
+        for direction, ratio in ratios.items()
+    }
+    expected = {direction: int(value) for direction, value in raw.items()}
+    remainder = world.config.n_transactions - sum(expected.values())
+    order = sorted(
+        ratios,
+        key=lambda direction: (
+            raw[direction] - expected[direction],
+            direction.value,
+        ),
+        reverse=True,
+    )
+    for direction in order[:remainder]:
+        expected[direction] += 1
+    actual = {direction: 0 for direction in TransactionDirection}
+    for transaction_id in world.normal_transaction_ids:
+        actual[world.transactions[transaction_id].direction] += 1
+    if actual != expected:
+        result.fail(f"Normal direction counts {actual} != expected {expected}")
+
+
+def _check_external_seen_bounds(world: WorldState, result: ValidationResult) -> None:
+    observations: dict[str, list[datetime]] = defaultdict(list)
+    for transaction in world.transactions.values():
+        if transaction.source_account_type == AccountReferenceType.EXTERNAL:
+            observations[transaction.source_account_ref].append(transaction.occurred_at)
+        if transaction.destination_account_type == AccountReferenceType.EXTERNAL:
+            observations[transaction.destination_account_ref].append(transaction.occurred_at)
+    external_capacity = round(
+        world.config.n_transactions
+        * (
+            world.config.inbound_transaction_ratio
+            + world.config.outbound_transaction_ratio
+        )
+    )
+    require_all_observed = external_capacity >= len(world.external_accounts)
+    for account_id, account in world.external_accounts.items():
+        timestamps = observations.get(account_id, [])
+        if not timestamps:
+            if require_all_observed:
+                result.fail(f"External account {account_id} is never observed by SHB")
+            continue
+        if account.first_seen_at != min(timestamps):
+            result.fail(f"External account {account_id} first_seen_at mismatch")
+        if account.last_seen_at != max(timestamps):
+            result.fail(f"External account {account_id} last_seen_at mismatch")
+
+
 def _check_ground_truth_tx_ids(world: WorldState, result: ValidationResult) -> None:
     tx_ids = set(world.transactions)
     for sc in world.scenarios.values():
@@ -446,18 +506,20 @@ def _check_ground_truth_tx_ids(world: WorldState, result: ValidationResult) -> N
                     f"Scenario {sc.scenario_id} suspicious_transaction_id missing: {tid}"
                 )
         for aid in sc.involved_account_ids:
-            if aid not in world.accounts and aid not in world.demo_accounts:
+            if aid not in world.accounts and aid not in world.external_accounts:
                 result.fail(
                     f"Scenario {sc.scenario_id} involved_account missing: {aid}"
                 )
+        if not set(sc.internal_account_ids) <= set(world.accounts):
+            result.fail(f"Scenario {sc.scenario_id} has non-SHB internal account IDs")
+        if not set(sc.external_account_ids) <= set(world.external_accounts):
+            result.fail(f"Scenario {sc.scenario_id} has invalid external account IDs")
+        if not sc.observable_internal_facts:
+            result.fail(f"Scenario {sc.scenario_id} has no observable internal facts")
 
 
 def _check_screening_dependencies(world: WorldState, result: ValidationResult) -> None:
-    entity_ids = (
-        set(world.customers)
-        | set(world.companies)
-        | {bank.bank_entity_id for bank in world.banks.values()}
-    )
+    entity_ids = set(world.customers) | set(world.companies)
     for entry in world.watchlist.values():
         if entry.screening_dependency != "unavailable":
             continue
@@ -477,6 +539,7 @@ def _check_feature_columns_clean(result: ValidationResult) -> None:
         (CUSTOMER_FEATURE_COLUMNS, "customers"),
         (COMPANY_FEATURE_COLUMNS, "companies"),
         (ACCOUNT_FEATURE_COLUMNS, "accounts"),
+        (EXTERNAL_ACCOUNT_FEATURE_COLUMNS, "external_accounts"),
         (TRANSACTION_FEATURE_COLUMNS, "transactions"),
     ):
         bad = set(colset) & GROUND_TRUTH_FORBIDDEN_COLUMNS

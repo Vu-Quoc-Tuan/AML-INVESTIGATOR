@@ -31,6 +31,7 @@ def main():
     addr_df = pd.read_csv(os.path.join(DATA_DIR, "addresses.csv"))
     own_df = pd.read_csv(os.path.join(DATA_DIR, "company_ownership.csv"))
     rel_df = pd.read_csv(os.path.join(DATA_DIR, "entity_relationships.csv"))
+    ext_df = pd.read_csv(os.path.join(DATA_DIR, "external_accounts.csv"))
 
     # Load JSON/JSONL
     def load_jsonl(path):
@@ -64,7 +65,7 @@ def main():
 
     # 2. Build quick lookup maps for Banks
     bank_risk_map = bank_df.set_index("bank_id")["risk_score"].to_dict()
-    bank_country_map = bank_df.set_index("bank_id")["country"].to_dict()
+    bank_country_map = bank_df.set_index("bank_id")["country_code"].to_dict()
 
     # 3. Build lookup maps for Entities (Customers & Companies)
     # Risk Level Mapper
@@ -97,6 +98,23 @@ def main():
             "risk_level": risk_mapper.get(r["kyc_risk_level"], 0),
             "address_id": r["registered_address_id"],
             "created_at": make_naive(r["incorporation_date"])
+        }
+
+    # Process external accounts
+    for _, r in ext_df.iterrows():
+        ext_id = r["external_account_id"]
+        c_type = 0 if r["counterparty_type"] == "INDIVIDUAL" else 1
+        r_score = float(r.get("risk_score", 0.0))
+        r_level = 2 if r_score > 0.5 else (1 if r_score > 0.15 else 0)
+        entity_info[ext_id] = {
+            "type": c_type,
+            "name": r["counterparty_name"],
+            "dob": pd.NaT,
+            "nationality": r["country_code"],
+            "income": 0.0,
+            "risk_level": r_level,
+            "address_id": None,
+            "created_at": make_naive(r["first_seen_at"])
         }
 
     # 4. Build KYC Profile lookup map
@@ -162,6 +180,16 @@ def main():
             "status": r["status"],
             "initial_balance": float(r["initial_balance"])
         }
+    for _, r in ext_df.iterrows():
+        ext_id = r["external_account_id"]
+        account_map[ext_id] = {
+            "owner_id": ext_id,
+            "owner_type": "CUSTOMER" if r["counterparty_type"] == "INDIVIDUAL" else "COMPANY",
+            "account_type": "EXTERNAL",
+            "opened_at": make_naive(r["first_seen_at"]),
+            "status": "ACTIVE",
+            "initial_balance": 0.0
+        }
 
     # 9. Compute Dynamic Velocity / Rolling Features
     print("Computing dynamic rolling window features...")
@@ -170,8 +198,8 @@ def main():
     tx_df = tx_df.sort_values("occurred_at").reset_index(drop=True)
 
     epochs = tx_df["occurred_at"].astype("int64") // 10**9
-    source_ids = tx_df["source_account_id"].values
-    dest_ids = tx_df["destination_account_id"].values
+    source_ids = tx_df["source_account_ref"].values
+    dest_ids = tx_df["destination_account_ref"].values
     amounts = tx_df["amount"].values
     source_ips = tx_df["source_ip"].values
     device_ids = tx_df["device_id"].values
@@ -254,24 +282,30 @@ def main():
         dest_pass_through_ratio_1h[i] = sum_out / (sum_in + 1.0)
 
         # IP sharing
-        ip_hist = ip_history[ip]
-        while ip_hist and ip_hist[0][0] <= t - 3600:
-            ip_hist.popleft()
-        ip_sharing_count_1h[i] = len({acc for _, acc in ip_hist})
+        if not pd.isna(ip) and ip != "":
+            ip_hist = ip_history[ip]
+            while ip_hist and ip_hist[0][0] <= t - 3600:
+                ip_hist.popleft()
+            ip_sharing_count_1h[i] = len({acc for _, acc in ip_hist})
+            ip_history[ip].append((t, s_id))
+        else:
+            ip_sharing_count_1h[i] = 0
 
         # Device sharing
-        dev_hist = dev_history[dev]
-        while dev_hist and dev_hist[0][0] <= t - 3600:
-            dev_hist.popleft()
-        device_sharing_count_1h[i] = len({acc for _, acc in dev_hist})
+        if not pd.isna(dev) and dev != "":
+            dev_hist = dev_history[dev]
+            while dev_hist and dev_hist[0][0] <= t - 3600:
+                dev_hist.popleft()
+            device_sharing_count_1h[i] = len({acc for _, acc in dev_hist})
+            dev_history[dev].append((t, s_id))
+        else:
+            device_sharing_count_1h[i] = 0
 
         # Record histories for future steps
         source_history[s_id].append((t, amt))
         dest_history[d_id].append((t, amt))
         acc_outgoing_history[s_id].append((t, amt))
         acc_incoming_history[d_id].append((t, amt))
-        ip_history[ip].append((t, s_id))
-        dev_history[dev].append((t, s_id))
 
     # Add dynamic features to DataFrame
     tx_df["source_txn_count_1h"] = source_count_1h
@@ -319,8 +353,8 @@ def main():
 
     for idx, row in tx_df.iterrows():
         t_time = row["occurred_at"]
-        s_acc = row["source_account_id"]
-        d_acc = row["destination_account_id"]
+        s_acc = row["source_account_ref"]
+        d_acc = row["destination_account_ref"]
         s_bank = row["source_bank_id"]
         d_bank = row["destination_bank_id"]
         amount = float(row["amount"])
