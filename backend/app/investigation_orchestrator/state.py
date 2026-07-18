@@ -87,7 +87,7 @@ class InvestigationInput(TypedDict):
 class InvestigationState(InvestigationInput, total=False):
     phase: WorkflowPhase
     case_status: CaseStatus
-    investigation_plan: list[str]
+    investigation_plan: dict[str, Any]
     agent_outputs: Annotated[dict[str, AgentOutput], merge_dicts]
     case_file: dict[str, Any]
     evidence_validation: dict[str, Any]

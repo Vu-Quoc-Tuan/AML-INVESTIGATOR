@@ -7,9 +7,14 @@ from app.investigation_orchestrator.nodes import (
     merge_and_validate_node,
     supervisor_node,
 )
-from app.investigation_orchestrator.report_agent import report_agent_node
+from app.investigation_orchestrator.report_agent import _reviewable_error
 from app.investigation_orchestrator.state import initial_state
 from app.investigation_orchestrator.workflow import build_workflow
+from tests.node_fixtures import deterministic_agent_nodes, report_node
+
+
+def _graph():
+    return build_workflow(agent_nodes=deterministic_agent_nodes())
 
 
 def _config(thread_id: str) -> dict[str, dict[str, str]]:
@@ -17,7 +22,7 @@ def _config(thread_id: str) -> dict[str, dict[str, str]]:
 
 
 def test_graph_merges_parallel_outputs_and_interrupts_for_review() -> None:
-    graph = build_workflow()
+    graph = _graph()
     config = _config("parallel-review")
 
     result = graph.invoke(
@@ -48,7 +53,7 @@ def test_graph_merges_parallel_outputs_and_interrupts_for_review() -> None:
 
 
 def test_graph_resumes_after_human_approval() -> None:
-    graph = build_workflow()
+    graph = _graph()
     config = _config("approval")
     graph.invoke(initial_state("CASE-002", {}), config)
 
@@ -69,7 +74,7 @@ def test_graph_resumes_after_human_approval() -> None:
 
 
 def test_initial_input_cannot_bypass_mandatory_review() -> None:
-    graph = build_workflow()
+    graph = _graph()
     config = _config("input-boundary")
     malicious_input = {
         **initial_state("CASE-INPUT", {}),
@@ -86,11 +91,11 @@ def test_initial_input_cannot_bypass_mandatory_review() -> None:
     state = graph.get_state(config).values
     assert state["case_status"] == "IN_REVIEW"
     assert state.get("human_review") is None
-    assert state["report"]["title"] == "AML Investigation Dossier (stub)"
+    assert state["report"]["title"] == "AML Investigation Dossier (test fixture)"
 
 
 def test_screening_unavailable_is_inconclusive() -> None:
-    graph = build_workflow()
+    graph = _graph()
     config = _config("screening-unavailable")
     graph.invoke(
         initial_state("CASE-003", {"screening_available": False}),
@@ -105,7 +110,7 @@ def test_screening_unavailable_is_inconclusive() -> None:
 
 
 def test_external_payment_uses_payment_message_provenance() -> None:
-    graph = build_workflow()
+    graph = _graph()
     config = _config("external-provenance")
     graph.invoke(
         initial_state("CASE-EXT", {"data_visibility": "PAYMENT_MESSAGE_ONLY"}),
@@ -119,7 +124,7 @@ def test_external_payment_uses_payment_message_provenance() -> None:
 
 
 def test_unknown_visibility_is_not_accepted_by_validation() -> None:
-    graph = build_workflow()
+    graph = _graph()
     config = _config("unknown-visibility")
     graph.invoke(
         initial_state("CASE-UNKNOWN", {"data_visibility": "UNSUPPORTED"}),
@@ -152,14 +157,84 @@ def test_missing_parallel_output_is_reported_to_human_review() -> None:
     assert merge_command.update["evidence_validation"]["status"] == "FAILED"
 
     failure_state = {**state, **merge_command.update}
-    report_command = report_agent_node(failure_state)
+    report_command = report_node(failure_state)
     supervisor_state = {**failure_state, **report_command.update}
     supervisor_command = supervisor_node(supervisor_state)
     assert supervisor_command.goto == "human_review"
 
 
+def test_failed_parallel_agent_still_reaches_human_review() -> None:
+    nodes = deterministic_agent_nodes()
+
+    def failed_transaction(_state):
+        return {
+            "agent_outputs": {
+                "transaction": {
+                    "agent": "transaction_agent",
+                    "status": "ERROR",
+                    "findings": [],
+                    "evidence": [],
+                }
+            }
+        }
+
+    nodes["transaction_agent"] = failed_transaction
+    graph = build_workflow(agent_nodes=nodes)
+    config = _config("failed-agent")
+
+    result = graph.invoke(initial_state("CASE-FAILED", {}), config)
+
+    assert "__interrupt__" in result
+    state = graph.get_state(config).values
+    assert state["evidence_validation"]["status"] == "FAILED"
+    assert state["report"]["workflow_error"] == "Mandatory agents failed: transaction"
+    assert state["case_status"] == "IN_REVIEW"
+
+
+def test_planner_fallback_error_is_visible_to_the_report() -> None:
+    state = {
+        **initial_state("CASE-PLANNER-FALLBACK", {}),
+        "errors": ["Planner fallback used: ProviderError"],
+    }
+
+    assert _reviewable_error(state) == "Planner fallback used: ProviderError"
+
+
+def test_screening_failure_validates_existing_case_before_error_dossier() -> None:
+    nodes = deterministic_agent_nodes()
+
+    def failed_screening(_state):
+        return Command(
+            update={
+                "agent_outputs": {
+                    "screening": {
+                        "agent": "screening_agent",
+                        "status": "ERROR",
+                        "available": False,
+                        "findings": [],
+                        "evidence": [],
+                    }
+                },
+                "workflow_error": "Screening agent failed",
+            },
+            goto="supervisor",
+        )
+
+    nodes["screening_agent"] = failed_screening
+    graph = build_workflow(agent_nodes=nodes)
+    config = _config("failed-screening-validation")
+
+    result = graph.invoke(initial_state("CASE-SCREENING-FAILED", {}), config)
+
+    assert "__interrupt__" in result
+    state = graph.get_state(config).values
+    assert state["evidence_validation"]["status"] == "PASSED"
+    assert state["report"]["workflow_error"] == "Screening agent failed"
+    assert state["report"]["findings"] == state["case_file"]["findings"]
+
+
 def test_more_information_request_ends_without_an_automatic_loop() -> None:
-    graph = build_workflow()
+    graph = _graph()
     config = _config("more-information")
     graph.invoke(initial_state("CASE-004", {}), config)
 

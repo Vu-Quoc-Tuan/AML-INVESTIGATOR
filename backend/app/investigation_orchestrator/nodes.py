@@ -1,12 +1,17 @@
-"""Supervisor and stub worker nodes for the AML investigation graph."""
+"""Deterministic orchestration nodes and LLM node adapters."""
 
 from __future__ import annotations
 
-from typing import Literal
+from collections.abc import Callable, Sequence
+from typing import Any, Literal
+
+from langchain_core.tools import BaseTool
 
 from langgraph.graph import END
 from langgraph.types import Command
 
+from .agents import invoke_planner, invoke_worker
+from .prompts import planner_context, screening_context, worker_context
 from .state import AgentOutput, HandoffRecord, InvestigationState
 
 
@@ -50,8 +55,15 @@ def supervisor_node(
         )
 
     if state.get("workflow_error"):
-        target = "report_agent" if not state.get("report") else "human_review"
-        phase = "reporting" if target == "report_agent" else "human_review"
+        if state.get("case_file") and not state.get("evidence_validation"):
+            target = "evidence_validator"
+            phase = "evidence_validation"
+        elif not state.get("report"):
+            target = "report_agent"
+            phase = "reporting"
+        else:
+            target = "human_review"
+            phase = "human_review"
         return Command(
             update={
                 "phase": phase,
@@ -60,7 +72,7 @@ def supervisor_node(
                     _handoff(
                         "supervisor",
                         target,
-                        "Workflow failure requires human review",
+                        "Workflow failure requires validated evidence and human review",
                     )
                 ],
             },
@@ -102,28 +114,22 @@ def supervisor_node(
     )
 
 
-def planner_node(
-    state: InvestigationState,
-) -> Command[Literal["supervisor"]]:
-    """Return the structured plan that a future LLM planner may replace."""
+def make_planner_node(agent: Any) -> Callable[[InvestigationState], Command]:
+    """Adapt the structured planner agent to the shared workflow state."""
 
-    plan = [
-        "transaction_investigation",
-        "kyc_entity_investigation",
-        "screening_and_compliance",
-        "evidence_validation",
-        "report_generation",
-        "human_review",
-    ]
-    return Command(
-        update={
+    def planner_node(state: InvestigationState) -> Command[Literal["supervisor"]]:
+        plan, error_type = invoke_planner(agent, planner_context(state))
+        update: dict[str, Any] = {
             "investigation_plan": plan,
             "handoff_log": [
                 _handoff("planner", "supervisor", "Investigation plan created")
             ],
-        },
-        goto="supervisor",
-    )
+        }
+        if error_type:
+            update["errors"] = [f"Planner fallback used: {error_type}"]
+        return Command(update=update, goto="supervisor")
+
+    return planner_node
 
 
 def parallel_dispatch_node(state: InvestigationState) -> dict[str, str]:
@@ -132,79 +138,18 @@ def parallel_dispatch_node(state: InvestigationState) -> dict[str, str]:
     return {"phase": "parallel_investigation"}
 
 
-def transaction_agent_node(state: InvestigationState) -> dict[str, object]:
-    """Produce representative transaction findings without calling real tools."""
+def make_worker_node(
+    owner: Literal["transaction", "kyc"],
+    agent: Any | None,
+    tools: Sequence[BaseTool],
+) -> Callable[[InvestigationState], dict[str, object]]:
+    """Adapt one parallel LLM worker without allowing direct state mutation."""
 
-    case_id = state["case_id"]
-    visibility = state.get("alert", {}).get("data_visibility", "FULL_INTERNAL")
-    source_system = {
-        "FULL_INTERNAL": "SHB_TRANSACTION_LEDGER",
-        "PAYMENT_MESSAGE_ONLY": "PAYMENT_MESSAGE",
-        "ENRICHED_EXTERNAL": "INTERBANK_ENRICHMENT_DEMO",
-    }.get(visibility, "UNKNOWN")
-    evidence_id = f"{case_id}:transaction:1"
-    output: AgentOutput = {
-        "agent": "transaction_agent",
-        "status": "COMPLETED",
-        "findings": [
-            {
-                "finding_id": f"{case_id}:finding:transaction:1",
-                "finding_type": "TRANSACTION_PATTERN",
-                "summary": "Stub rapid pass-through pattern detected",
-                "evidence_ids": [evidence_id],
-                "visibility_level": visibility,
-            }
-        ],
-        "evidence": [
-            {
-                "evidence_id": evidence_id,
-                "source_system": source_system,
-                "source_record_id": state.get("alert", {}).get(
-                    "transaction_id", f"stub-transaction-{case_id}"
-                ),
-                "visibility_level": visibility,
-                "payload": {"stub": True},
-            }
-        ],
-    }
-    return {"agent_outputs": {"transaction": output}}
+    def worker_node(state: InvestigationState) -> dict[str, object]:
+        output = invoke_worker(owner, agent, tools, worker_context(state))
+        return {"agent_outputs": {owner: output}}
 
-
-def kyc_agent_node(state: InvestigationState) -> dict[str, object]:
-    """Produce KYC/UBO output while respecting SHB-centric visibility."""
-
-    case_id = state["case_id"]
-    alert = state.get("alert", {})
-    is_shb_entity = alert.get("subject_bank_id", "BANK-SHB-001") == "BANK-SHB-001"
-    output: AgentOutput = {
-        "agent": "kyc_agent",
-        "status": "COMPLETED",
-        "findings": [],
-        "evidence": [],
-        "metadata": {"full_kyc_available": is_shb_entity},
-    }
-
-    if is_shb_entity:
-        evidence_id = f"{case_id}:kyc:1"
-        output["findings"] = [
-            {
-                "finding_id": f"{case_id}:finding:kyc:1",
-                "finding_type": "KYC_PROFILE",
-                "summary": "Stub verified SHB KYC and UBO profile collected",
-                "evidence_ids": [evidence_id],
-                "entity_scope": "SHB_INTERNAL",
-            }
-        ]
-        output["evidence"] = [
-            {
-                "evidence_id": evidence_id,
-                "source_system": "SHB_KYC_REPOSITORY",
-                "source_record_id": alert.get("subject_id", f"stub-subject-{case_id}"),
-                "payload": {"ubo_verified": True, "stub": True},
-            }
-        ]
-
-    return {"agent_outputs": {"kyc": output}}
+    return worker_node
 
 
 def merge_and_validate_node(
@@ -216,6 +161,36 @@ def merge_and_validate_node(
     missing = [name for name in ("transaction", "kyc") if name not in outputs]
     if missing:
         message = f"Missing mandatory parallel outputs: {', '.join(missing)}"
+        return Command(
+            update={
+                "phase": "reporting",
+                "case_status": "IN_REVIEW",
+                "workflow_error": message,
+                "case_file": {
+                    "case_id": state["case_id"],
+                    "alert": state.get("alert", {}),
+                    "findings": [],
+                    "evidence": [],
+                },
+                "evidence_validation": {
+                    "status": "FAILED",
+                    "valid_finding_count": 0,
+                    "invalid_finding_count": 0,
+                    "issues": [message],
+                },
+                "errors": [message],
+                "handoff_log": [
+                    _handoff("merge_and_validate", "report_agent", message)
+                ],
+            },
+            goto="report_agent",
+        )
+
+    failed = [
+        name for name in ("transaction", "kyc") if outputs[name].get("status") == "ERROR"
+    ]
+    if failed:
+        message = f"Mandatory agents failed: {', '.join(failed)}"
         return Command(
             update={
                 "phase": "reporting",
@@ -273,50 +248,24 @@ def merge_and_validate_node(
     )
 
 
-def screening_agent_node(
-    state: InvestigationState,
-) -> Command[Literal["supervisor"]]:
-    """Produce screening output and preserve unavailable results as inconclusive."""
+def make_screening_node(
+    agent: Any | None, tools: Sequence[BaseTool]
+) -> Callable[[InvestigationState], Command]:
+    """Adapt screening output and route provider failures to a reviewable dossier."""
 
-    case_id = state["case_id"]
-    alert = state.get("alert", {})
-    available = alert.get("screening_available", True)
-    status = alert.get("screening_status", "NO_MATCH") if available else "INCONCLUSIVE"
-    entity_scope = alert.get("screening_entity_scope", "SHB_INTERNAL")
-    match_basis = alert.get("screening_match_basis", "IDENTIFIER")
-    if status == "CONFIRMED_MATCH" and entity_scope == "EXTERNAL" and match_basis == "NAME":
-        status = "POTENTIAL_MATCH"
-
-    evidence_id = f"{case_id}:screening:1"
-    output: AgentOutput = {
-        "agent": "screening_agent",
-        "status": status,
-        "available": available,
-        "findings": [
-            {
-                "finding_id": f"{case_id}:finding:screening:1",
-                "finding_type": "SCREENING_RESULT",
-                "summary": f"Screening completed with status {status}",
-                "evidence_ids": [evidence_id],
-                "entity_scope": entity_scope,
-                "match_basis": match_basis,
-            }
-        ],
-        "evidence": [
-            {
-                "evidence_id": evidence_id,
-                "source_system": "INTERNAL_SCREENING_SERVICE",
-                "source_record_id": f"stub-screening-{case_id}",
-                "payload": {"available": available, "status": status, "stub": True},
-            }
-        ],
-    }
-    return Command(
-        update={
+    def screening_agent_node(
+        state: InvestigationState,
+    ) -> Command[Literal["supervisor"]]:
+        output = invoke_worker("screening", agent, tools, screening_context(state))
+        update: dict[str, Any] = {
             "agent_outputs": {"screening": output},
             "handoff_log": [
                 _handoff("screening_agent", "supervisor", "Screening completed")
             ],
-        },
-        goto="supervisor",
-    )
+        }
+        if output.get("status") == "ERROR":
+            update["workflow_error"] = "Screening agent failed"
+            update["errors"] = ["Screening agent failed"]
+        return Command(update=update, goto="supervisor")
+
+    return screening_agent_node
