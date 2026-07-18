@@ -27,3 +27,15 @@ class OwnershipDataService:
         return graph_to_dict(
             get_initialized_data_repository().build_active_ownership_graph(as_of_date)
         )
+
+    def ownership_neighborhood(
+        self,
+        company_id: str,
+        as_of_date: str | date | datetime,
+        max_depth: int,
+    ) -> dict[str, object]:
+        return graph_to_dict(
+            get_initialized_data_repository().build_ownership_neighborhood(
+                company_id, as_of_date, max_depth
+            )
+        )
