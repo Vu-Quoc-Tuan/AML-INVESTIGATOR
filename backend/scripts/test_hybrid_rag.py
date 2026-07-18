@@ -17,7 +17,9 @@ from langchain_core.documents import Document
 # Force UTF-8 encoding for stdout on Windows
 if sys.platform.startswith('win'):
     try:
+        # pyrefly: ignore [missing-attribute]
         sys.stdout.reconfigure(encoding='utf-8')
+        # pyrefly: ignore [missing-attribute]
         sys.stderr.reconfigure(encoding='utf-8')
     except AttributeError:
         pass
@@ -93,6 +95,7 @@ def test_hybrid_rag_and_rerank():
     print("\n================== BẮT ĐẦU CHẠY THỬ NGHIỆM HYBRID RAG + RERANK ==================\n")
     
     for item in queries:
+        # pyrefly: ignore [bad-argument-type, missing-attribute]
         query_text = unicodedata.normalize("NFC", item["query"])
         print(f"--- {item['title']} ---")
         print(f"Câu hỏi: \"{query_text}\"")
@@ -136,11 +139,16 @@ def test_hybrid_rag_and_rerank():
         # Parse points into LangChain Documents
         documents_to_rerank = []
         for hit in hybrid_results.points:
+            # pyrefly: ignore [missing-attribute]
             doc_content = hit.payload.get("document", "")
             meta = {
+                # pyrefly: ignore [missing-attribute]
                 "chapter": hit.payload.get("chapter", "N/A"),
+                # pyrefly: ignore [missing-attribute]
                 "section": hit.payload.get("section", "N/A"),
+                # pyrefly: ignore [missing-attribute]
                 "article": hit.payload.get("article", "N/A"),
+                # pyrefly: ignore [missing-attribute]
                 "article_number": hit.payload.get("article_number", None),
                 "hybrid_score": hit.score
             }

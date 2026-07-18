@@ -1,0 +1,13 @@
+{
+  "pythonVersion": "3.10",
+  "venvPath": "backend",
+  "venv": ".venv",
+  "extraPaths": ["backend"],
+  "include": ["backend"],
+  "exclude": [
+    ".venv",
+    "backend/.venv",
+    "**/node_modules",
+    "**/__pycache__"
+  ]
+}
