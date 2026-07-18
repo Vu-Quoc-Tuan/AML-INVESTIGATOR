@@ -1,4 +1,4 @@
-"""Generate normal (baseline) transactions from behavioral profiles."""
+"""Generate SHB-centric normal transactions and typed account references."""
 
 from __future__ import annotations
 
@@ -8,69 +8,17 @@ from typing import Optional
 
 from synthetic_data.models import (
     Account,
+    AccountReferenceType,
     AccountStatus,
-    BehavioralProfile,
     Channel,
-    EntityType,
+    DataVisibility,
+    ExternalAccount,
     Transaction,
+    TransactionDirection,
     TransactionType,
 )
 from synthetic_data.profiles import PROFILE_SPECS, ProfileSpec
 from synthetic_data.world import WorldState
-
-# Roles that should resolve to company-owned accounts
-_COMPANY_ROLES = frozenset(
-    {
-        "merchant",
-        "utility",
-        "employer",
-        "supplier",
-        "vendor",
-        "platform",
-        "client",
-        "venue",
-        "logistics",
-        "customs",
-        "payroll",
-        "cloud",
-        "service",
-        "tax",
-        "insurance",
-        "ticket_buyer",  # ticket_buyer is customer paying company — handled specially
-        "foreign_supplier",
-        "domestic_buyer",
-        "artist",
-    }
-)
-_CUSTOMER_ROLES = frozenset(
-    {
-        "peer",
-        "family",
-        "employee",
-        "parent",
-        "customer",
-        "ticket_buyer",
-    }
-)
-
-_PURPOSE_TO_TYPE = {
-    "PAYROLL": TransactionType.TRANSFER,
-    "SUPPLIER": TransactionType.PAYMENT,
-    "RENT": TransactionType.PAYMENT,
-    "UTILITIES": TransactionType.PAYMENT,
-    "GOODS": TransactionType.PAYMENT,
-    "SERVICES": TransactionType.PAYMENT,
-    "TRANSFER": TransactionType.TRANSFER,
-    "CASH_IN": TransactionType.CASH_DEPOSIT,
-    "CASH_OUT": TransactionType.CASH_WITHDRAWAL,
-    "FX": TransactionType.FX,
-    "TICKET": TransactionType.PAYMENT,
-    "INVOICE": TransactionType.PAYMENT,
-    "LOAN": TransactionType.TRANSFER,
-    "REFUND": TransactionType.TRANSFER,
-    "OTHER": TransactionType.TRANSFER,
-    "PAYMENT": TransactionType.PAYMENT,
-}
 
 
 def _pick(rng, seq):
@@ -78,46 +26,49 @@ def _pick(rng, seq):
 
 
 def _weighted_channel(rng, channels: tuple) -> Channel:
-    items = [c for c, _ in channels]
-    weights = [w for _, w in channels]
-    total = sum(weights)
-    r = rng.random() * total
-    acc = 0.0
-    for item, w in zip(items, weights):
-        acc += w
-        if r <= acc:
+    items = [channel for channel, _ in channels]
+    weights = [weight for _, weight in channels]
+    threshold = rng.random() * sum(weights)
+    cumulative = 0.0
+    for item, weight in zip(items, weights):
+        cumulative += weight
+        if threshold <= cumulative:
             return item if isinstance(item, Channel) else Channel(item)
-    return items[-1] if isinstance(items[-1], Channel) else Channel(items[-1])
+    item = items[-1]
+    return item if isinstance(item, Channel) else Channel(item)
 
 
 def _sample_hour(rng, weights: tuple[float, ...]) -> int:
-    total = sum(weights)
-    r = rng.random() * total
-    acc = 0.0
-    for h, w in enumerate(weights):
-        acc += w
-        if r <= acc:
-            return h
+    threshold = rng.random() * sum(weights)
+    cumulative = 0.0
+    for hour, weight in enumerate(weights):
+        cumulative += weight
+        if threshold <= cumulative:
+            return hour
     return 12
 
 
 def _sample_amount(rng, spec: ProfileSpec) -> int:
-    mu = math.log(max(spec.amount_median, 1))
-    sigma = 0.4 * spec.volatility
-    val = int(math.exp(rng.gauss(mu, sigma)))
-    return max(spec.amount_min, min(spec.amount_max, val))
+    value = int(math.exp(rng.gauss(math.log(max(spec.amount_median, 1)), 0.4 * spec.volatility)))
+    return max(spec.amount_min, min(spec.amount_max, value))
 
 
 def _can_debit(world: WorldState, account: Account, amount: int) -> bool:
-    bal = world.balances.get(account.account_id, 0)
-    if account.allow_overdraft:
-        return bal - amount >= -account.overdraft_limit
-    return bal >= amount
+    balance = world.balances.get(account.account_id, 0)
+    floor = -account.overdraft_limit if account.allow_overdraft else 0
+    return balance - amount >= floor
 
 
-def _apply_transfer(world: WorldState, source_id: str, dest_id: str, amount: int) -> None:
-    world.balances[source_id] = world.balances.get(source_id, 0) - amount
-    world.balances[dest_id] = world.balances.get(dest_id, 0) + amount
+def _apply_transfer(
+    world: WorldState,
+    source: Account | ExternalAccount,
+    destination: Account | ExternalAccount,
+    amount: int,
+) -> None:
+    if isinstance(source, Account):
+        world.balances[source.account_id] -= amount
+    if isinstance(destination, Account):
+        world.balances[destination.account_id] += amount
 
 
 def _device_ip_for(world: WorldState, entity_id: str) -> tuple[str, str]:
@@ -131,116 +82,43 @@ def _device_ip_for(world: WorldState, entity_id: str) -> tuple[str, str]:
 
 
 def _active_accounts(world: WorldState) -> list[Account]:
-    return [a for a in world.accounts.values() if a.status == AccountStatus.ACTIVE]
+    return [account for account in world.accounts.values() if account.status == AccountStatus.ACTIVE]
 
 
-def _accounts_for_entity_type(world: WorldState, entity_type: EntityType) -> list[Account]:
-    return [
-        a
-        for a in _active_accounts(world)
-        if a.owner_entity_type == entity_type
-    ]
+def _reference_type(account: Account | ExternalAccount) -> AccountReferenceType:
+    if isinstance(account, Account):
+        return AccountReferenceType.INTERNAL_SHB
+    return AccountReferenceType.EXTERNAL
 
 
-def _counterpart_account(
-    world: WorldState, source: Account, role: str
-) -> Optional[Account]:
-    """Resolve a counterparty account compatible with the behavioral role."""
-    rng = world.rng
-    candidates = [
-        a
-        for a in _active_accounts(world)
-        if a.account_id != source.account_id
-    ]
-    if not candidates:
-        return None
-
-    if role == "foreign_supplier":
-        foreign = _normal_foreign_account(world, source)
-        if foreign is not None:
-            return foreign
-
-    if role in ("employer", "payroll", "platform", "cloud", "utility"):
-        pool = [
-            a
-            for a in candidates
-            if a.owner_entity_type == EntityType.COMPANY
-            and a.behavioral_profile
-            in (
-                BehavioralProfile.PAYROLL_COMPANY,
-                BehavioralProfile.SME_SOFTWARE_COMPANY,
-                BehavioralProfile.RETAIL_MERCHANT,
-                BehavioralProfile.IMPORT_EXPORT_COMPANY,
-                BehavioralProfile.EVENT_ORGANIZER,
-            )
-        ]
-        if pool:
-            return _pick(rng, pool)
-        company_pool = _accounts_for_entity_type(world, EntityType.COMPANY)
-        company_pool = [a for a in company_pool if a.account_id != source.account_id]
-        if company_pool:
-            return _pick(rng, company_pool)
-
-    if role in ("merchant", "supplier", "vendor", "venue", "logistics", "customs", "service", "domestic_buyer", "client", "artist", "tax", "insurance"):
-        company_pool = [
-            a for a in candidates if a.owner_entity_type == EntityType.COMPANY
-        ]
-        if company_pool:
-            return _pick(rng, company_pool)
-
-    if role in ("peer", "family", "employee", "parent", "customer", "ticket_buyer"):
-        peer_pool = [
-            a for a in candidates if a.owner_entity_type == EntityType.CUSTOMER
-        ]
-        if peer_pool:
-            return _pick(rng, peer_pool)
-
-    # Unknown roles must not silently pick random if we can still classify
-    if role in _COMPANY_ROLES:
-        company_pool = [
-            a for a in candidates if a.owner_entity_type == EntityType.COMPANY
-        ]
-        if company_pool:
-            return _pick(rng, company_pool)
-    if role in _CUSTOMER_ROLES:
-        peer_pool = [
-            a for a in candidates if a.owner_entity_type == EntityType.CUSTOMER
-        ]
-        if peer_pool:
-            return _pick(rng, peer_pool)
-
-    return _pick(rng, candidates)
+def _direction(
+    source: Account | ExternalAccount,
+    destination: Account | ExternalAccount,
+) -> TransactionDirection:
+    topology = (_reference_type(source), _reference_type(destination))
+    mapping = {
+        (AccountReferenceType.INTERNAL_SHB, AccountReferenceType.INTERNAL_SHB): TransactionDirection.INTERNAL,
+        (AccountReferenceType.EXTERNAL, AccountReferenceType.INTERNAL_SHB): TransactionDirection.INBOUND,
+        (AccountReferenceType.INTERNAL_SHB, AccountReferenceType.EXTERNAL): TransactionDirection.OUTBOUND,
+    }
+    if topology not in mapping:
+        raise ValueError("External-to-external transactions are outside the SHB data boundary")
+    return mapping[topology]
 
 
-def _expected_foreign_countries(world: WorldState, source: Account) -> list[str]:
-    """Return declared, non-high-risk countries for ordinary cross-border traffic."""
-    countries: list[str] = []
-    if source.owner_entity_type == EntityType.COMPANY:
-        company = world.companies.get(source.owner_entity_id)
-        if company is not None:
-            countries.extend(company.expected_countries)
-    elif source.owner_entity_type == EntityType.CUSTOMER:
-        profile = source.behavioral_profile
-        if profile is not None and PROFILE_SPECS[profile].p_cross_border >= 0.1:
-            countries.extend(("US", "SG"))
-
-    allowed = set(world.config.normal_foreign_countries)
-    declared = [country for country in countries if country in allowed]
-    return declared or list(world.config.normal_foreign_countries)
+def _country(world: WorldState, account: Account | ExternalAccount) -> str:
+    if isinstance(account, ExternalAccount):
+        return account.country_code
+    return world.banks[account.bank_id].country_code
 
 
-def _normal_foreign_account(world: WorldState, source: Account) -> Optional[Account]:
-    countries = _expected_foreign_countries(world, source)
-    if not countries:
-        return None
-    country = _pick(world.rng, countries)
-    return world.demo_accounts.get(f"ACCT-FOREIGN-{country}-001")
-
-
-def _transaction_type_for(purpose: str, is_xb: bool) -> TransactionType:
-    if is_xb:
-        return TransactionType.FX
-    return _PURPOSE_TO_TYPE.get(purpose, TransactionType.TRANSFER)
+def _touch_external(account: Account | ExternalAccount, occurred_at: datetime) -> None:
+    if not isinstance(account, ExternalAccount):
+        return
+    if account.first_seen_at is None or occurred_at < account.first_seen_at:
+        account.first_seen_at = occurred_at
+    if account.last_seen_at is None or occurred_at > account.last_seen_at:
+        account.last_seen_at = occurred_at
 
 
 def ensure_balance(
@@ -250,11 +128,10 @@ def ensure_balance(
     *,
     reason: str = "scenario-prefund",
 ) -> None:
-    """Fund an account transparently without rewriting its opening balance."""
+    """Fund an SHB account visibly without changing its opening balance."""
     current = world.balances.get(account_id, 0)
-    if current >= minimum:
-        return
-    fund_account(world, account_id, minimum - current, reason=reason)
+    if current < minimum:
+        fund_account(world, account_id, minimum - current, reason=reason)
 
 
 def fund_account(
@@ -264,39 +141,34 @@ def fund_account(
     *,
     reason: str = "liquidity-support",
 ) -> None:
-    """Create a visible bank-settlement funding transaction for a liquidity gap."""
+    """Create a payment-message inbound for an SHB liquidity gap."""
     if amount <= 0:
         return
-    acc = world.get_account(account_id)
-    if acc is None:
-        raise ValueError(f"Cannot fund unknown account: {account_id}")
-    preferred = f"ACCT-SETTLEMENT-{acc.bank_id.removeprefix('BANK-')}"
-    settlement = world.demo_accounts.get(preferred)
-    if settlement is None:
-        fallback_bank = world.config.domestic_bank_ids[0]
-        settlement = world.demo_accounts[
-            f"ACCT-SETTLEMENT-{fallback_bank.removeprefix('BANK-')}"
-        ]
-    funding_time = max(world.config.world_start, acc.opened_at) + timedelta(seconds=1)
-    txn = create_transaction(
+    account = world.get_account(account_id)
+    if account is None:
+        raise ValueError(f"Cannot fund unknown SHB account: {account_id}")
+    settlement = world.external_accounts["EXT-ACC-SETTLEMENT-001"]
+    funding_time = max(world.config.world_start, account.opened_at) + timedelta(seconds=1)
+    transaction = create_transaction(
         world,
         settlement,
-        acc,
+        account,
         amount,
         funding_time,
         transaction_type=TransactionType.TRANSFER,
         channel=Channel.API,
         purpose_code="LOAN",
         description=f"DECLARED-FUNDING-{reason.upper()}",
+        evidence_source="INTERBANK_PAYMENT_MESSAGE",
     )
-    if txn is None:
-        raise RuntimeError(f"Unable to fund account {account_id}")
+    if transaction is None:
+        raise RuntimeError(f"Unable to fund SHB account {account_id}")
 
 
 def create_transaction(
     world: WorldState,
-    source: Account,
-    dest: Account,
+    source: Account | ExternalAccount,
+    dest: Account | ExternalAccount,
     amount: int,
     occurred_at: datetime,
     *,
@@ -308,299 +180,232 @@ def create_transaction(
     device_id: Optional[str] = None,
     force: bool = False,
     count_as_normal: bool = False,
+    data_visibility: Optional[DataVisibility] = None,
+    evidence_source: Optional[str] = None,
 ) -> Optional[Transaction]:
-    """Create a transaction if balance allows (or force via initial-balance top-up)."""
-    cfg = world.config
+    """Create one SHB-observable transaction with typed endpoints."""
     if amount <= 0:
         return None
+    direction = _direction(source, dest)
+    source_country = _country(world, source)
+    destination_country = _country(world, dest)
+    is_cross_border = source_country != destination_country
 
-    if channel is None:
-        profile = source.behavioral_profile
-        if profile and profile in PROFILE_SPECS:
-            channel = _weighted_channel(world.rng, PROFILE_SPECS[profile].channels)
-        else:
-            channel = Channel.MOBILE
-
-    source_bank = world.banks.get(source.bank_id)
-    destination_bank = world.banks.get(dest.bank_id)
-    source_country = source_bank.country if source_bank is not None else "VN"
-    dest_country = destination_bank.country if destination_bank is not None else "VN"
-    is_xb = source_country != dest_country
+    if isinstance(source, Account):
+        if occurred_at < source.opened_at:
+            occurred_at = source.opened_at + timedelta(minutes=1)
+        if isinstance(dest, Account) and occurred_at < dest.opened_at:
+            occurred_at = dest.opened_at + timedelta(minutes=1)
+        if not _can_debit(world, source, amount):
+            if force:
+                ensure_balance(world, source.account_id, amount)
+            else:
+                return None
+        if not _can_debit(world, source, amount):
+            return None
+        if device_id is None or source_ip is None:
+            generated_device, generated_ip = _device_ip_for(world, source.owner_entity_id)
+            device_id = device_id or generated_device
+            source_ip = source_ip or generated_ip
+        if channel is None:
+            profile = source.behavioral_profile
+            channel = (
+                _weighted_channel(world.rng, PROFILE_SPECS[profile].channels)
+                if profile in PROFILE_SPECS
+                else Channel.MOBILE
+            )
+    else:
+        source_ip = None
+        device_id = None
+        channel = channel or (Channel.SWIFT if is_cross_border else Channel.API)
 
     if transaction_type is None:
-        transaction_type = _transaction_type_for(purpose_code, is_xb)
+        transaction_type = TransactionType.FX if is_cross_border else TransactionType.TRANSFER
 
-    if device_id is None or source_ip is None:
-        d, ip = _device_ip_for(world, source.owner_entity_id)
-        device_id = device_id or d
-        source_ip = source_ip or ip
+    visibility = data_visibility
+    if visibility is None:
+        visibility = (
+            DataVisibility.FULL_INTERNAL
+            if direction == TransactionDirection.INTERNAL
+            else DataVisibility.PAYMENT_MESSAGE_ONLY
+        )
+    if evidence_source is None:
+        evidence_source = (
+            "SHB_TRANSACTION_LEDGER"
+            if direction == TransactionDirection.INTERNAL
+            else "PAYMENT_MESSAGE"
+        )
 
-    min_open = max(source.opened_at, dest.opened_at)
-    if occurred_at < min_open:
-        occurred_at = min_open + timedelta(minutes=1)
-
-    if not _can_debit(world, source, amount):
-        if force or source.account_id in world.demo_accounts:
-            ensure_balance(world, source.account_id, amount)
-        else:
-            return None
-
-    if not _can_debit(world, source, amount):
-        return None
-
-    txn = Transaction(
+    transaction = Transaction(
         transaction_id=world.ids.transaction(),
-        source_account_id=source.account_id,
-        destination_account_id=dest.account_id,
+        source_account_ref=source.account_id,
+        source_account_type=_reference_type(source),
         source_bank_id=source.bank_id,
+        destination_account_ref=dest.account_id,
+        destination_account_type=_reference_type(dest),
         destination_bank_id=dest.bank_id,
         amount=amount,
-        currency=cfg.base_currency,
+        currency=world.config.base_currency,
         transaction_type=transaction_type,
         channel=channel,
         purpose_code=purpose_code,
         description=description or f"PMT-{world.rng.randint(100000, 999999)}",
         occurred_at=occurred_at,
+        direction=direction,
         source_ip=source_ip,
         device_id=device_id,
-        is_cross_border=is_xb,
-        destination_country=dest_country,
+        is_cross_border=is_cross_border,
+        source_country=source_country,
+        destination_country=destination_country,
+        data_visibility=visibility,
+        evidence_source=evidence_source,
+        payment_reference=f"PAYREF-{world.rng.randint(10000000, 99999999)}",
     )
-    _apply_transfer(world, source.account_id, dest.account_id, amount)
-    world.transactions[txn.transaction_id] = txn
+    _apply_transfer(world, source, dest, amount)
+    _touch_external(source, occurred_at)
+    _touch_external(dest, occurred_at)
+    world.transactions[transaction.transaction_id] = transaction
     if count_as_normal:
-        world.normal_transaction_ids.add(txn.transaction_id)
-    return txn
+        world.normal_transaction_ids.add(transaction.transaction_id)
+    return transaction
 
 
-def _payroll_sources(world: WorldState) -> list[Account]:
-    out = [
-        a
-        for a in _active_accounts(world)
-        if a.behavioral_profile
-        in (
-            BehavioralProfile.PAYROLL_COMPANY,
-            BehavioralProfile.SME_SOFTWARE_COMPANY,
-            BehavioralProfile.RETAIL_MERCHANT,
-        )
-    ]
-    return out
+def _largest_remainder_counts(total: int, ratios: dict[TransactionDirection, float]) -> dict[TransactionDirection, int]:
+    raw = {direction: total * ratio for direction, ratio in ratios.items()}
+    counts = {direction: int(value) for direction, value in raw.items()}
+    remainder = total - sum(counts.values())
+    order = sorted(ratios, key=lambda direction: (raw[direction] - counts[direction], direction.value), reverse=True)
+    for direction in order[:remainder]:
+        counts[direction] += 1
+    return counts
+
+
+def _transaction_timestamp(world: WorldState, index: int, total: int) -> datetime:
+    span_seconds = int((world.config.world_end - world.config.world_start).total_seconds())
+    offset = int((index + 1) * span_seconds / (total + 1))
+    return world.config.world_start + timedelta(seconds=offset)
 
 
 def generate_normal_transactions(world: WorldState) -> None:
-    """Phase 3: profile-driven baseline activity (no SYSTEM-FLOAT super-node)."""
+    """Generate exact SHB-centric direction quotas with no external ledger."""
     cfg = world.config
-    rng = world.rng
-    target = cfg.n_transactions
     accounts = _active_accounts(world)
-    if not accounts:
+    if not accounts or cfg.n_transactions <= 0:
         return
 
-    months = max(1.0, cfg.window_days / 30.0)
-    weights = []
-    for acc in accounts:
-        prof = acc.behavioral_profile
-        if prof and prof in PROFILE_SPECS:
-            spec = PROFILE_SPECS[prof]
-            mid = (spec.tx_count_min + spec.tx_count_max) / 2.0
-            weights.append(mid * months)
-        else:
-            weights.append(10 * months)
+    counts = _largest_remainder_counts(
+        cfg.n_transactions,
+        {
+            TransactionDirection.INTERNAL: cfg.internal_transaction_ratio,
+            TransactionDirection.INBOUND: cfg.inbound_transaction_ratio,
+            TransactionDirection.OUTBOUND: cfg.outbound_transaction_ratio,
+        },
+    )
+    schedule = [direction for direction, count in counts.items() for _ in range(count)]
+    world.rng.shuffle(schedule)
 
-    total_w = sum(weights) or 1.0
-    planned = []
-    for i, _acc in enumerate(accounts):
-        share = int(round(target * (weights[i] / total_w)))
-        planned.append(max(0, share))
-    diff = target - sum(planned)
-    if planned:
-        planned[0] = max(0, planned[0] + diff)
+    external_slots = [index for index, direction in enumerate(schedule) if direction != TransactionDirection.INTERNAL]
+    cross_border_count = min(round(cfg.n_transactions * cfg.cross_border_ratio), len(external_slots))
+    cross_border_slots = set(world.rng.sample(external_slots, cross_border_count))
 
-    start = cfg.world_start
-    end = cfg.world_end
-    payroll_pool = _payroll_sources(world)
+    domestic_external = [
+        account for account in world.external_accounts.values() if account.country_code == "VN"
+    ]
+    foreign_external = [
+        account
+        for account in world.external_accounts.values()
+        if account.country_code != "VN" and account.bank_id != cfg.high_risk_foreign_bank_id
+    ]
+    if not domestic_external or not foreign_external:
+        raise ValueError("Normal transaction generation requires domestic and foreign external accounts")
+    world.rng.shuffle(domestic_external)
+    world.rng.shuffle(foreign_external)
+    domestic_index = 0
+    foreign_index = 0
 
-    # Plan events then apply chronologically so funding order is realistic
-    events: list[tuple[datetime, str, dict]] = []
-
-    for acc, n_tx in zip(accounts, planned):
-        if n_tx <= 0:
-            continue
-        prof = acc.behavioral_profile
-        if not prof or prof not in PROFILE_SPECS:
-            continue
-        spec = PROFILE_SPECS[prof]
-        open_at = max(acc.opened_at, start)
-
-        # Periodic legitimate inflows (salary/revenue) from real counterparties
-        n_inflows = max(1, int(months))
-        for k in range(n_inflows):
-            day_offset = int((k + 0.5) * (cfg.window_days / max(1, n_inflows)))
-            ts = open_at + timedelta(days=day_offset, hours=9, minutes=rng.randint(0, 59))
-            if ts > end or ts < open_at:
-                continue
-            inflow_amt = _sample_amount(rng, spec) * rng.randint(2, 6)
-            events.append(
-                (
-                    ts,
-                    "inflow",
-                    {
-                        "dest": acc,
-                        "amount": inflow_amt,
-                        "purpose": "PAYROLL" if not spec.is_company else "INVOICE",
-                    },
-                )
+    for index, direction in enumerate(schedule):
+        timestamp = _transaction_timestamp(world, index, len(schedule))
+        eligible = [account for account in accounts if account.opened_at <= timestamp]
+        if len(eligible) < 2:
+            timestamp = max(timestamp, max(account.opened_at for account in accounts) + timedelta(minutes=1))
+            eligible = accounts
+        source_internal = _pick(world.rng, eligible)
+        if direction != TransactionDirection.INBOUND:
+            funded = [
+                account
+                for account in eligible
+                if world.balances.get(account.account_id, 0)
+                > (-account.overdraft_limit if account.allow_overdraft else 0)
+            ]
+            if not funded:
+                raise RuntimeError("No funded SHB source is available for normal traffic")
+            source_internal = _pick(world.rng, funded)
+        profile = source_internal.behavioral_profile
+        spec = PROFILE_SPECS[profile]
+        amount = _sample_amount(world.rng, spec)
+        if direction != TransactionDirection.INBOUND:
+            floor = (
+                -source_internal.overdraft_limit
+                if source_internal.allow_overdraft
+                else 0
             )
+            spendable = world.balances[source_internal.account_id] - floor
+            amount = min(amount, spendable)
+        purpose = _pick(world.rng, spec.typical_purpose_codes)
+        channel = _weighted_channel(world.rng, spec.channels)
 
-        for _ in range(n_tx):
-            day = rng.randint(0, max(0, (end - open_at).days))
-            hour = _sample_hour(rng, spec.hour_weights)
-            base_day = open_at + timedelta(days=day)
-            ts = datetime(
-                base_day.year,
-                base_day.month,
-                base_day.day,
-                hour,
-                rng.randint(0, 59),
-                rng.randint(0, 59),
-                tzinfo=timezone.utc,
-            )
-            if ts < open_at or ts > end:
-                continue
-            role = _pick(rng, spec.counterpart_roles)
-            purpose = _pick(rng, spec.typical_purpose_codes)
-            amount = _sample_amount(rng, spec)
-            cross_border = rng.random() < spec.p_cross_border
-            events.append(
-                (
-                    ts,
-                    "transfer",
-                    {
-                        "source": acc,
-                        "role": role,
-                        "purpose": purpose,
-                        "amount": amount,
-                        "cross_border": cross_border,
-                        "channel": _weighted_channel(rng, spec.channels),
-                        "spec": spec,
-                    },
-                )
-            )
-
-    events.sort(key=lambda e: (e[0], e[1]))
-
-    for ts, kind, payload in events:
-        if len(world.normal_transaction_ids) >= target:
-            break
-        if kind == "inflow":
-            dest: Account = payload["dest"]
-            amount = payload["amount"]
-            # Prefer payroll/company sources; else peer with funds
-            source = None
-            if payroll_pool:
-                source = _pick(rng, [a for a in payroll_pool if a.account_id != dest.account_id] or payroll_pool)
-            if source is None:
-                funded = [
-                    a
-                    for a in accounts
-                    if a.account_id != dest.account_id
-                    and world.balances.get(a.account_id, 0) >= amount
-                ]
-                if funded:
-                    source = _pick(rng, funded)
-            if source is None:
-                # Skip invisible float — leave balance as-is
-                continue
-            if not _can_debit(world, source, amount):
-                continue
-            create_transaction(
+        if direction == TransactionDirection.INTERNAL:
+            destinations = [account for account in eligible if account.account_id != source_internal.account_id]
+            destination_internal = _pick(world.rng, destinations)
+            transaction = create_transaction(
                 world,
-                source,
-                dest,
+                source_internal,
+                destination_internal,
                 amount,
-                ts,
-                channel=Channel.API if payload["purpose"] == "PAYROLL" else Channel.INTERNET,
-                purpose_code=payload["purpose"],
-                description=f"INFLOW-{rng.randint(10000, 99999)}",
-                count_as_normal=True,
-            )
-        else:
-            source = payload["source"]
-            amount = payload["amount"]
-            purpose = payload["purpose"]
-            if payload["cross_border"]:
-                dest = _normal_foreign_account(world, source)
-                if dest is None:
-                    continue
-                channel = Channel.SWIFT
-                purpose = "FX" if purpose not in ("GOODS", "INVOICE", "SERVICES") else purpose
-            else:
-                dest = _counterpart_account(world, source, payload["role"])
-                channel = payload["channel"]
-                if dest is None:
-                    continue
-            if not _can_debit(world, source, amount):
-                bal = world.balances.get(source.account_id, 0)
-                if bal > payload["spec"].amount_min * 2:
-                    amount = min(amount, max(payload["spec"].amount_min, bal // 2))
-                else:
-                    continue
-            create_transaction(
-                world,
-                source,
-                dest,
-                amount,
-                ts,
+                timestamp,
                 channel=channel,
                 purpose_code=purpose,
-                description=f"{purpose}-{rng.randint(100000, 999999)}",
+                description=f"{purpose}-{world.rng.randint(100000, 999999)}",
                 count_as_normal=True,
             )
-
-    # Density fill if under target (still balance-safe, no system float)
-    safety = 0
-    while len(world.normal_transaction_ids) < target and safety < target * 3:
-        safety += 1
-        acc = _pick(rng, accounts)
-        prof = acc.behavioral_profile
-        if not prof or prof not in PROFILE_SPECS:
-            continue
-        spec = PROFILE_SPECS[prof]
-        cross_border = rng.random() < spec.p_cross_border
-        if cross_border:
-            dest = _normal_foreign_account(world, acc)
-            if dest is None:
-                continue
-            purpose = "FX"
-            channel = Channel.SWIFT
         else:
-            dest = _counterpart_account(world, acc, _pick(rng, spec.counterpart_roles))
-            if dest is None:
-                continue
-            purpose = _pick(rng, spec.typical_purpose_codes)
-            channel = _weighted_channel(rng, spec.channels)
-        amount = _sample_amount(rng, spec)
-        day = rng.randint(0, cfg.window_days - 1)
-        hour = _sample_hour(rng, spec.hour_weights)
-        ts = cfg.world_start + timedelta(
-            days=day, hours=hour, minutes=rng.randint(0, 59), seconds=rng.randint(0, 59)
-        )
-        if ts < acc.opened_at:
-            continue
-        if not _can_debit(world, acc, amount):
-            bal = world.balances.get(acc.account_id, 0)
-            if bal > spec.amount_min:
-                amount = min(amount, bal)
+            if index in cross_border_slots:
+                external = foreign_external[foreign_index % len(foreign_external)]
+                foreign_index += 1
+                channel = Channel.SWIFT
+                if purpose not in ("GOODS", "INVOICE", "SERVICES"):
+                    purpose = "FX"
             else:
-                continue
-        create_transaction(
-            world,
-            acc,
-            dest,
-            amount,
-            ts,
-            channel=channel,
-            purpose_code=purpose,
-            description=f"TX-{rng.randint(100000, 999999)}",
-            count_as_normal=True,
+                external = domestic_external[domestic_index % len(domestic_external)]
+                domestic_index += 1
+            if direction == TransactionDirection.INBOUND:
+                transaction = create_transaction(
+                    world,
+                    external,
+                    source_internal,
+                    amount,
+                    timestamp,
+                    channel=channel,
+                    purpose_code=purpose,
+                    description=f"INBOUND-{world.rng.randint(100000, 999999)}",
+                    count_as_normal=True,
+                )
+            else:
+                transaction = create_transaction(
+                    world,
+                    source_internal,
+                    external,
+                    amount,
+                    timestamp,
+                    channel=channel,
+                    purpose_code=purpose,
+                    description=f"OUTBOUND-{world.rng.randint(100000, 999999)}",
+                    count_as_normal=True,
+                )
+        if transaction is None:
+            raise RuntimeError(f"Failed to create normal transaction at schedule index {index}")
+
+    if len(world.normal_transaction_ids) != cfg.n_transactions:
+        raise RuntimeError(
+            f"Normal transaction count {len(world.normal_transaction_ids)} != {cfg.n_transactions}"
         )

@@ -12,10 +12,12 @@ from synthetic_data.models import (
     ACCOUNT_FEATURE_COLUMNS,
     COMPANY_FEATURE_COLUMNS,
     CUSTOMER_FEATURE_COLUMNS,
+    EXTERNAL_ACCOUNT_FEATURE_COLUMNS,
     TRANSACTION_FEATURE_COLUMNS,
     Account,
     Company,
     Customer,
+    ExternalAccount,
     Transaction,
 )
 from synthetic_data.world import WorldState
@@ -103,6 +105,11 @@ def transaction_feature_row(t: Transaction) -> dict[str, Any]:
     return {k: d[k] for k in TRANSACTION_FEATURE_COLUMNS}
 
 
+def external_account_feature_row(account: ExternalAccount) -> dict[str, Any]:
+    data = _model_dump(account)
+    return {key: data[key] for key in EXTERNAL_ACCOUNT_FEATURE_COLUMNS}
+
+
 def write_world(world: WorldState, output_dir: Path | None = None) -> dict[str, str]:
     """Persist all tables. Returns map of filename -> sha256."""
     out = Path(output_dir or world.config.output_dir)
@@ -113,9 +120,10 @@ def write_world(world: WorldState, output_dir: Path | None = None) -> dict[str, 
     customers = [customer_feature_row(world.customers[k]) for k in sorted(world.customers)]
     companies = [company_feature_row(world.companies[k]) for k in sorted(world.companies)]
     accounts = [account_feature_row(world.accounts[k]) for k in sorted(world.accounts)]
-    # Include demo accounts in accounts.csv for graph integrity
-    for k in sorted(world.demo_accounts):
-        accounts.append(account_feature_row(world.demo_accounts[k]))
+    external_accounts = [
+        external_account_feature_row(world.external_accounts[key])
+        for key in sorted(world.external_accounts)
+    ]
     transactions = [
         transaction_feature_row(world.transactions[k]) for k in sorted(world.transactions)
     ]
@@ -145,6 +153,11 @@ def write_world(world: WorldState, output_dir: Path | None = None) -> dict[str, 
     )
     checksums["accounts.csv"] = _write_csv(
         out / "accounts.csv", accounts, ACCOUNT_FEATURE_COLUMNS
+    )
+    checksums["external_accounts.csv"] = _write_csv(
+        out / "external_accounts.csv",
+        external_accounts,
+        EXTERNAL_ACCOUNT_FEATURE_COLUMNS,
     )
     checksums["transactions.csv"] = _write_csv(
         out / "transactions.csv", transactions, TRANSACTION_FEATURE_COLUMNS
@@ -187,8 +200,8 @@ def write_world(world: WorldState, output_dir: Path | None = None) -> dict[str, 
 
     banks = [_model_dump(world.banks[k]) for k in sorted(world.banks)]
     bank_cols = (
-        "bank_id", "bank_entity_id", "legal_name", "country", "risk_score",
-        "is_demo", "bank_type",
+        "bank_id", "bank_name", "bank_type", "country_code", "is_home_bank",
+        "risk_score", "swift_code",
     )
     checksums["banks.csv"] = _write_csv(out / "banks.csv", banks, bank_cols)
 
@@ -198,7 +211,8 @@ def write_world(world: WorldState, output_dir: Path | None = None) -> dict[str, 
             "counts": {
                 "customers": len(world.customers),
                 "companies": len(world.companies),
-                "accounts": len(world.accounts) + len(world.demo_accounts),
+                "accounts": len(world.accounts),
+                "external_accounts": len(world.external_accounts),
                 "normal_transactions": len(world.normal_transaction_ids),
                 "transactions": len(world.transactions),
                 "banks": len(world.banks),

@@ -44,12 +44,7 @@ def generate_world(
         setattr(config, k, v)
     if output_dir is not None:
         config.output_dir = Path(output_dir)
-    if config.min_accounts > config.max_accounts:
-        raise ValueError("min_accounts cannot exceed max_accounts")
-    # Need room for demo accounts + at least one account per entity when possible
-    demo_slots = 2 + len(config.normal_foreign_countries) + len(config.domestic_bank_ids)
-    if config.max_accounts < demo_slots + 1:
-        raise ValueError("max_accounts too small for demo accounts")
+    config.validate()
 
     world = WorldState.create(config)
 
