@@ -2,3 +2,4 @@ backend/.venv/
 **/__pycache__/
 **/.pytest_cache/
 backend/data/generated_smoke/
+backend/data/opensanctions/raw/

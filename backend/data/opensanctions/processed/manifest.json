@@ -1,0 +1,18 @@
+{
+  "generated_at": "2026-07-18T04:35:30.010345+00:00",
+  "country_filter": "vn",
+  "outputs": {
+    "vietnam_persons.csv": {
+      "rows": 1601,
+      "source": "https://data.opensanctions.org/artifacts/peps/20260717152701-kci/targets.simple.csv"
+    }
+  },
+  "sources": {
+    "peps": {
+      "index_url": "https://data.opensanctions.org/artifacts/peps/20260717152701-kci/index.json",
+      "version": "20260717152701-kci",
+      "url": "https://data.opensanctions.org/artifacts/peps/20260717152701-kci/targets.simple.csv",
+      "sha1": "69c2d73d2c3d9a3b16413c3b0f5d0ccd5f829af7"
+    }
+  }
+}
