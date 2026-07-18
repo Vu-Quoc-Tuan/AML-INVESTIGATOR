@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Iterable
 
 from synthetic_data.config import GROUND_TRUTH_FORBIDDEN_COLUMNS
@@ -16,7 +16,6 @@ from synthetic_data.models import (
     TRANSACTION_FEATURE_COLUMNS,
     AccountReferenceType,
     DataVisibility,
-    EntityType,
     TransactionDirection,
     VerificationStatus,
 )

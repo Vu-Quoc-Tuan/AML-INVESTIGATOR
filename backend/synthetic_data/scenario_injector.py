@@ -10,7 +10,7 @@ separately by ``ground_truth.py`` from scenario metadata returned here.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from synthetic_data.entity_generator import generate_account

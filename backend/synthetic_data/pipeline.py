@@ -13,7 +13,7 @@ from synthetic_data.ledger import fund_ledger_deficits
 from synthetic_data.normal_transaction_generator import generate_normal_transactions
 from synthetic_data.ownership_generator import generate_ownerships
 from synthetic_data.scenario_injector import inject_all_scenarios
-from synthetic_data.validators import assert_valid, validate_world
+from synthetic_data.validators import assert_valid
 from synthetic_data.watchlist_generator import generate_watchlist
 from synthetic_data.world import WorldState
 

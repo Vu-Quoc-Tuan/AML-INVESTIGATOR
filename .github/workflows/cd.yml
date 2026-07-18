@@ -1,0 +1,181 @@
+name: CD
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: development
+        type: choice
+        options:
+          - development
+          - staging
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aml-be-development
+  cancel-in-progress: false
+
+jobs:
+  reject-staging:
+    name: Reject unconfigured staging deployment
+    if: inputs.environment == 'staging'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Stop before deployment
+        run: |
+          echo "::error title=Staging is not configured::Only the development self-hosted runner is configured. No staging deployment was attempted."
+          exit 1
+
+  validate:
+    name: Run CI before deployment
+    if: inputs.environment == 'development'
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  deploy-development:
+    name: Deploy backend to development
+    needs: validate
+    if: inputs.environment == 'development'
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - aml
+    timeout-minutes: 30
+    environment:
+      name: development
+    env:
+      COMPOSE_PROJECT_NAME: aml-investigator
+      CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+      LOCAL_HEALTH_URL: http://127.0.0.1:8000/health
+      PUBLIC_HEALTH_URL: https://aml-api.vutuan.indevs.in/health
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Verify runner and environment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REF" in
+            refs/heads/dev|refs/heads/main|refs/heads/master) ;;
+            *)
+              echo "::error title=Deployment ref is not allowed::Dispatch development CD from dev, main, or master. Received $GITHUB_REF."
+              exit 1
+              ;;
+          esac
+          if [[ -z "$CORS_ORIGINS" ]]; then
+            echo "::error title=Missing environment variable::Configure CORS_ORIGINS in the development GitHub Environment before deploying."
+            exit 1
+          fi
+          docker version
+          docker compose version
+
+      - name: Validate backend Compose contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          compose_json="$RUNNER_TEMP/aml-compose.json"
+          docker compose -p "$COMPOSE_PROJECT_NAME" config --format json > "$compose_json"
+          COMPOSE_JSON="$compose_json" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          config = json.loads(Path(os.environ["COMPOSE_JSON"]).read_text(encoding="utf-8"))
+          backend = config.get("services", {}).get("backend")
+          if backend is None:
+              raise SystemExit("Compose must define a backend service")
+
+          ports = backend.get("ports", [])
+          publishes_loopback = any(
+              str(port.get("target")) == "8000"
+              and str(port.get("published")) == "8000"
+              and port.get("host_ip") == "127.0.0.1"
+              for port in ports
+              if isinstance(port, dict)
+          )
+          if not publishes_loopback:
+              raise SystemExit(
+                  "backend must publish 127.0.0.1:8000:8000 before deployment"
+              )
+
+          environment = backend.get("environment", {})
+          if not isinstance(environment, dict):
+              raise SystemExit("backend environment must use Compose mapping syntax")
+          if environment.get("CORS_ORIGINS") != os.environ["CORS_ORIGINS"]:
+              raise SystemExit(
+                  "backend must pass CORS_ORIGINS from the runner environment"
+              )
+          PY
+
+      - name: Build backend image for preflight
+        run: docker compose -p "$COMPOSE_PROJECT_NAME" build backend
+
+      - name: Verify image contains the FastAPI application
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps backend \
+            python -c "from fastapi import FastAPI; from app.main import app; assert isinstance(app, FastAPI), 'app.main:app is not a FastAPI instance'"; then
+            echo "::error title=Backend runtime is not ready::Image must provide FastAPI app.main:app before docker compose up is allowed."
+            exit 1
+          fi
+
+      - name: Deploy backend container
+        run: >-
+          docker compose -p "$COMPOSE_PROJECT_NAME"
+          up --detach --build --remove-orphans backend
+
+      - name: Wait for local backend health
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in {1..30}; do
+            if curl --fail --silent --max-time 5 "$LOCAL_HEALTH_URL" > /dev/null; then
+              echo "Local backend health check passed on attempt $attempt."
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "::error title=Local health check failed::$LOCAL_HEALTH_URL did not become healthy within 60 seconds."
+          docker compose -p "$COMPOSE_PROJECT_NAME" ps
+          docker compose -p "$COMPOSE_PROJECT_NAME" logs --tail 200 backend
+          exit 1
+
+      - name: Verify public Cloudflare endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in {1..10}; do
+            if curl --fail --silent --max-time 10 "$PUBLIC_HEALTH_URL" > /dev/null; then
+              echo "Public backend health check passed on attempt $attempt."
+              exit 0
+            fi
+            sleep 3
+          done
+
+          echo "::error title=Public health check failed::$PUBLIC_HEALTH_URL is unavailable. Check Cloudflare Tunnel, Public Hostname, and DNS configuration."
+          docker compose -p "$COMPOSE_PROJECT_NAME" ps
+          docker compose -p "$COMPOSE_PROJECT_NAME" logs --tail 200 backend
+          exit 1
+
+      - name: Write deployment summary
+        shell: bash
+        run: |
+          {
+            echo "## Development backend deployed"
+            echo
+            echo "- Runner labels: \`self-hosted, Linux, X64, aml\`"
+            echo "- Compose project: \`aml-investigator\`"
+            echo "- Local health: \`$LOCAL_HEALTH_URL\`"
+            echo "- Public health: \`$PUBLIC_HEALTH_URL\`"
+            echo "- Image registry: not used"
+          } >> "$GITHUB_STEP_SUMMARY"
