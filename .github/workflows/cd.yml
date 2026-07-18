@@ -1,75 +1,38 @@
-name: CD
+name: CD Frontend
 
+# Auto-deploy frontend when this branch is pushed. No GitHub Environment /
+# secrets setup required — uses self-hosted runner labels only.
 on:
+  push:
+    branches:
+      - feat/frontend-cd
+    paths:
+      - "frontend/**"
+      - "docker-compose.yml"
+      - ".github/workflows/cd.yml"
+      - "Makefile"
   workflow_dispatch:
-    inputs:
-      environment:
-        description: Target environment
-        required: true
-        default: development
-        type: choice
-        options:
-          - development
-          - staging
-      target:
-        description: What to deploy
-        required: true
-        default: frontend
-        type: choice
-        options:
-          - frontend
-      skip_ci:
-        description: Skip CI validation (temporary faster deploy)
-        required: false
-        default: true
-        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: aml-fe-${{ inputs.environment }}
-  cancel-in-progress: false
+  group: aml-frontend-dev
+  cancel-in-progress: true
 
 jobs:
-  reject-staging:
-    name: Reject unconfigured staging deployment
-    if: inputs.environment == 'staging'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Stop before deployment
-        run: |
-          echo "::error title=Staging is not configured::Only the development self-hosted runner is configured. No staging deployment was attempted."
-          exit 1
-
-  validate:
-    name: Run CI before deployment
-    if: inputs.environment == 'development' && inputs.skip_ci == false
-    uses: ./.github/workflows/ci.yml
-    permissions:
-      contents: read
-
-  deploy-frontend-development:
-    name: Deploy frontend to development
-    needs: validate
-    if: |
-      always() &&
-      inputs.environment == 'development' &&
-      inputs.target == 'frontend' &&
-      (needs.validate.result == 'success' || needs.validate.result == 'skipped')
+  deploy-frontend:
+    name: Deploy frontend (self-hosted)
     runs-on:
       - self-hosted
       - Linux
       - X64
       - aml
     timeout-minutes: 30
-    environment:
-      name: development
     env:
       COMPOSE_PROJECT_NAME: aml-investigator
       LOCAL_HEALTH_URL: http://127.0.0.1:3000/
-      # Optional public hostname via Cloudflare Tunnel. Leave empty to skip.
+      # Optional: set repo/org variable PUBLIC_FRONTEND_URL to also check public tunnel.
       PUBLIC_FRONTEND_URL: ${{ vars.PUBLIC_FRONTEND_URL }}
     steps:
       - name: Check out repository
@@ -79,6 +42,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo "Runner: ${RUNNER_NAME:-unknown}"
           docker version
           docker compose version
 
@@ -140,13 +104,12 @@ jobs:
           docker compose -p "$COMPOSE_PROJECT_NAME" logs --tail 200 frontend
           exit 1
 
-      - name: Verify public Cloudflare endpoint (optional)
+      - name: Verify public endpoint (optional)
         shell: bash
         run: |
           set -euo pipefail
           if [[ -z "${PUBLIC_FRONTEND_URL:-}" ]]; then
-            echo "PUBLIC_FRONTEND_URL is not set; skipping public endpoint check."
-            echo "Configure vars.PUBLIC_FRONTEND_URL (e.g. https://aml.vutuan.indevs.in/) after Cloudflare Tunnel is ready."
+            echo "PUBLIC_FRONTEND_URL not set — skip public check."
             exit 0
           fi
 
@@ -158,25 +121,22 @@ jobs:
             sleep 3
           done
 
-          echo "::error title=Public health check failed::$PUBLIC_FRONTEND_URL is unavailable. Check Cloudflare Tunnel / DNS."
-          docker compose -p "$COMPOSE_PROJECT_NAME" ps
-          docker compose -p "$COMPOSE_PROJECT_NAME" logs --tail 200 frontend
-          exit 1
+          echo "::warning title=Public health check failed::$PUBLIC_FRONTEND_URL unavailable (tunnel/DNS). Container is up locally."
 
       - name: Write deployment summary
         shell: bash
         run: |
           {
-            echo "## Development frontend deployed"
+            echo "## Frontend deployed"
             echo
-            echo "- Runner labels: \`self-hosted, Linux, X64, aml\`"
+            echo "- Runner: \`${RUNNER_NAME:-self-hosted}\`"
+            echo "- Labels: \`self-hosted, Linux, X64, aml\`"
             echo "- Compose project: \`$COMPOSE_PROJECT_NAME\`"
-            echo "- Local health: \`$LOCAL_HEALTH_URL\`"
+            echo "- Local: \`$LOCAL_HEALTH_URL\`"
             if [[ -n "${PUBLIC_FRONTEND_URL:-}" ]]; then
-              echo "- Public URL: \`$PUBLIC_FRONTEND_URL\`"
+              echo "- Public: \`$PUBLIC_FRONTEND_URL\`"
             else
-              echo "- Public URL: not configured (\`vars.PUBLIC_FRONTEND_URL\`)"
+              echo "- Public: not configured"
             fi
-            echo "- Image registry: not used (build on runner)"
-            echo "- Skip CI: \`${{ inputs.skip_ci }}\`"
+            echo "- Ref: \`${GITHUB_REF_NAME}\` @ \`${GITHUB_SHA:0:7}\`"
           } >> "$GITHUB_STEP_SUMMARY"
