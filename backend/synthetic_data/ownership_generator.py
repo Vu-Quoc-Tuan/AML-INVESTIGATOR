@@ -68,14 +68,6 @@ def _has_ownership(world: WorldState, company_id: str) -> bool:
     return any(o.owned_company_id == company_id for o in world.ownerships.values())
 
 
-def _ownership_sum(world: WorldState, company_id: str) -> float:
-    return sum(
-        o.ownership_percentage
-        for o in world.ownerships.values()
-        if o.owned_company_id == company_id and o.effective_to is None
-    )
-
-
 def _add_ownership(
     world: WorldState,
     *,
