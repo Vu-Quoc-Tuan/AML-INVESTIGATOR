@@ -3,15 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-
-
-def _utc(dt: datetime) -> datetime:
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
 
 
 @dataclass
@@ -180,21 +174,6 @@ COMPANY_NAME_CORES = (
     "Thanh Dat Synthetic", "Bao Tin Demo", "Nhat Quang Sandbox",
     "Phuc Loc Mock", "Hai Au Synthetic", "Song Hong Demo",
     "Dong A Sandbox", "Tay Nguyen Mock", "Mekong Synthetic", "Red River Demo",
-)
-
-PURPOSE_CODES = (
-    "PAYROLL", "SUPPLIER", "RENT", "UTILITIES", "GOODS", "SERVICES",
-    "TRANSFER", "CASH_IN", "CASH_OUT", "FX", "TICKET", "INVOICE",
-    "LOAN", "REFUND", "OTHER",
-)
-
-CHANNELS = ("MOBILE", "INTERNET", "BRANCH", "ATM", "POS", "API", "SWIFT")
-
-ACCOUNT_TYPES = ("PAYMENT", "SAVINGS", "BUSINESS_CURRENT", "ESCROW")
-
-DOCUMENT_TYPES = (
-    "NATIONAL_ID", "PASSPORT", "BUSINESS_LICENSE", "TAX_CERTIFICATE",
-    "ARTICLES_OF_ASSOCIATION", "UBO_DECLARATION", "PROOF_OF_ADDRESS",
 )
 
 # Ground-truth column names that must NEVER appear in feature tables

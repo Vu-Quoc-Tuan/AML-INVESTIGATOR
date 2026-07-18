@@ -14,18 +14,18 @@ def json_safe(value: Any) -> Any:
 
     if value is None:
         return None
-    if isinstance(value, (pd.Timestamp, datetime, date)):
-        return value.isoformat()
-    if isinstance(value, dict):
-        return {str(key): json_safe(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return [json_safe(item) for item in value]
     try:
         missing = pd.isna(value)
         if isinstance(missing, bool) and missing:
             return None
     except (TypeError, ValueError):
         pass
+    if isinstance(value, (pd.Timestamp, datetime, date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [json_safe(item) for item in value]
     if hasattr(value, "item"):
         try:
             return value.item()

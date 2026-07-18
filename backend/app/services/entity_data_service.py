@@ -13,6 +13,14 @@ class EntityDataService:
     def account(self, account_id: str) -> dict[str, object] | None:
         return series_to_dict(get_initialized_data_repository().account_by_id(account_id))
 
+    def accounts_for_entity(self, entity_id: str) -> list[dict[str, object]]:
+        return frame_to_records(
+            get_initialized_data_repository().accounts_for_entity(entity_id)
+        )
+
+    def address(self, address_id: str) -> dict[str, object] | None:
+        return series_to_dict(get_initialized_data_repository().address_by_id(address_id))
+
     def external_account(self, external_account_id: str) -> dict[str, object] | None:
         return series_to_dict(
             get_initialized_data_repository().external_account_by_id(external_account_id)
@@ -29,6 +37,20 @@ class EntityDataService:
     def kyc_documents(self, entity_id: str) -> list[dict[str, object]]:
         return frame_to_records(
             get_initialized_data_repository().kyc_documents_by_entity(entity_id)
+        )
+
+    def kyc_document(self, document_id: str) -> dict[str, object] | None:
+        return series_to_dict(
+            get_initialized_data_repository().kyc_document_by_id(document_id)
+        )
+
+    def entities_by_strong_identifier(
+        self, identifier_type: str, identifier_value: str
+    ) -> list[dict[str, object]]:
+        return frame_to_records(
+            get_initialized_data_repository().entities_by_strong_identifier(
+                identifier_type, identifier_value
+            )
         )
 
     def relationships(self, entity_id: str) -> list[dict[str, object]]:
