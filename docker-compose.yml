@@ -1,11 +1,29 @@
+name: aml-investigator
+
 services:
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    image: aml-investigator-frontend:local
+    restart: unless-stopped
     ports:
-      - "3000:3000"
+      # Loopback only — expose publicly via Cloudflare Tunnel / reverse proxy.
+      - "127.0.0.1:3000:3000"
     environment:
       NODE_ENV: production
       NEXT_TELEMETRY_DISABLED: "1"
       HOSTNAME: "0.0.0.0"
+      PORT: "3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 25s
