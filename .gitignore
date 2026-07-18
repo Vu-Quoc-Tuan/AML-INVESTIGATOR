@@ -8,6 +8,4 @@ backend/data/opensanctions/raw/
 backend/.venv/
 __pycache__/
 .pytest_cache/
-.env
-plan/
 backend/pytest.ini
