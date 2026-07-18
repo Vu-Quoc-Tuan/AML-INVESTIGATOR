@@ -55,6 +55,23 @@ class Channel(str, Enum):
     SWIFT = "SWIFT"
 
 
+class AccountReferenceType(str, Enum):
+    INTERNAL_SHB = "INTERNAL_SHB"
+    EXTERNAL = "EXTERNAL"
+
+
+class TransactionDirection(str, Enum):
+    INTERNAL = "INTERNAL"
+    INBOUND = "INBOUND"
+    OUTBOUND = "OUTBOUND"
+
+
+class DataVisibility(str, Enum):
+    FULL_INTERNAL = "FULL_INTERNAL"
+    PAYMENT_MESSAGE_ONLY = "PAYMENT_MESSAGE_ONLY"
+    ENRICHED_EXTERNAL = "ENRICHED_EXTERNAL"
+
+
 class VerificationStatus(str, Enum):
     VERIFIED = "VERIFIED"
     PENDING = "PENDING"
@@ -125,12 +142,12 @@ class Address(StrictModel):
 
 class Bank(StrictModel):
     bank_id: str
-    bank_entity_id: str
-    legal_name: str
-    country: str
+    bank_name: str
+    bank_type: str
+    country_code: str
+    is_home_bank: bool = False
     risk_score: float
-    is_demo: bool = False
-    bank_type: str = "COMMERCIAL"
+    swift_code: str
 
 
 class Customer(StrictModel):
@@ -178,16 +195,38 @@ class Account(StrictModel):
     initial_balance: int
     allow_overdraft: bool = False
     overdraft_limit: int = 0
-    bank_id: str = "BANK-VCB-001"
+    bank_id: str = "BANK-SHB-001"
     # Runtime only — stripped from feature CSV
     behavioral_profile: Optional[BehavioralProfile] = None
 
 
+class ExternalAccount(StrictModel):
+    external_account_id: str
+    masked_account_number: str
+    bank_id: str
+    country_code: str
+    counterparty_name: str
+    counterparty_type: Literal["INDIVIDUAL", "COMPANY", "VASP"]
+    available_identifier_type: str
+    available_identifier_value: Optional[str]
+    risk_score: float
+    first_seen_at: Optional[datetime] = None
+    last_seen_at: Optional[datetime] = None
+    metadata_source: str = "PAYMENT_MESSAGE"
+    data_visibility: DataVisibility = DataVisibility.PAYMENT_MESSAGE_ONLY
+
+    @property
+    def account_id(self) -> str:
+        return self.external_account_id
+
+
 class Transaction(StrictModel):
     transaction_id: str
-    source_account_id: str
-    destination_account_id: str
+    source_account_ref: str
+    source_account_type: AccountReferenceType
     source_bank_id: str
+    destination_account_ref: str
+    destination_account_type: AccountReferenceType
     destination_bank_id: str
     amount: int
     currency: str
@@ -196,10 +235,15 @@ class Transaction(StrictModel):
     purpose_code: str
     description: str
     occurred_at: datetime
-    source_ip: str
-    device_id: str
+    direction: TransactionDirection
+    source_ip: Optional[str]
+    device_id: Optional[str]
     is_cross_border: bool
+    source_country: str
     destination_country: str
+    data_visibility: DataVisibility
+    evidence_source: str
+    payment_reference: str
 
     @field_validator("amount")
     @classmethod
@@ -207,6 +251,14 @@ class Transaction(StrictModel):
         if v <= 0:
             raise ValueError("amount must be positive")
         return v
+
+    @property
+    def source_account_id(self) -> str:
+        return self.source_account_ref
+
+    @property
+    def destination_account_id(self) -> str:
+        return self.destination_account_ref
 
 
 class KYCProfile(StrictModel):
@@ -297,6 +349,11 @@ class GroundTruthScenario(StrictModel):
     explanation: str
     typology_tags: list[str] = Field(default_factory=list)
     notes: dict[str, Any] = Field(default_factory=dict)
+    internal_account_ids: list[str] = Field(default_factory=list)
+    external_account_ids: list[str] = Field(default_factory=list)
+    observable_internal_facts: list[str] = Field(default_factory=list)
+    observable_external_facts: list[str] = Field(default_factory=list)
+    hidden_world_facts: list[str] = Field(default_factory=list)
 
 
 # Feature-export column sets (no ground-truth labels)
@@ -320,9 +377,18 @@ ACCOUNT_FEATURE_COLUMNS = (
 )
 
 TRANSACTION_FEATURE_COLUMNS = (
-    "transaction_id", "source_account_id", "destination_account_id",
-    "source_bank_id", "destination_bank_id", "amount", "currency",
+    "transaction_id", "source_account_ref", "source_account_type",
+    "source_bank_id", "destination_account_ref", "destination_account_type",
+    "destination_bank_id", "amount", "currency",
     "transaction_type", "channel", "purpose_code", "description",
-    "occurred_at", "source_ip", "device_id", "is_cross_border",
-    "destination_country",
+    "occurred_at", "direction", "source_ip", "device_id", "is_cross_border",
+    "source_country", "destination_country", "data_visibility",
+    "evidence_source", "payment_reference",
+)
+
+EXTERNAL_ACCOUNT_FEATURE_COLUMNS = (
+    "external_account_id", "masked_account_number", "bank_id", "country_code",
+    "counterparty_name", "counterparty_type", "available_identifier_type",
+    "available_identifier_value", "risk_score", "first_seen_at", "last_seen_at",
+    "metadata_source", "data_visibility",
 )

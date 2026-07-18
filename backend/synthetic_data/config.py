@@ -29,6 +29,14 @@ class GeneratorConfig:
     base_currency: str = "VND"
     output_dir: Path = field(default_factory=lambda: Path("./data/generated"))
 
+    # SHB data boundary
+    home_bank_id: str = "BANK-SHB-001"
+    n_external_accounts: int = 1_000
+    internal_transaction_ratio: float = 0.45
+    inbound_transaction_ratio: float = 0.275
+    outbound_transaction_ratio: float = 0.275
+    cross_border_ratio: float = 0.05
+
     # Timeline anchors (UTC). World "now" is end of window.
     world_end: datetime = field(
         default_factory=lambda: datetime(2025, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
@@ -41,11 +49,11 @@ class GeneratorConfig:
 
     # Domestic + demo institutions
     domestic_bank_ids: tuple[str, ...] = (
-        "BANK-VCB-001",
-        "BANK-TCB-002",
-        "BANK-MBB-003",
-        "BANK-ACB-004",
-        "BANK-VPB-005",
+        "BANK-VCB-EXT",
+        "BANK-TCB-EXT",
+        "BANK-MBB-EXT",
+        "BANK-ACB-EXT",
+        "BANK-VPB-EXT",
     )
     crypto_platform_bank_id: str = "BANK-CRYPTO-DEMO-99"
     high_risk_foreign_bank_id: str = "BANK-FOREIGN-HR-88"
@@ -58,6 +66,22 @@ class GeneratorConfig:
     # Manifest
     write_manifest: bool = True
     run_validation: bool = True
+
+    def validate(self) -> None:
+        if self.min_accounts > self.max_accounts:
+            raise ValueError("min_accounts cannot exceed max_accounts")
+        if not 500 <= self.n_external_accounts <= 1_500:
+            raise ValueError("n_external_accounts must be between 500 and 1500")
+        ratios = (
+            self.internal_transaction_ratio
+            + self.inbound_transaction_ratio
+            + self.outbound_transaction_ratio
+        )
+        if abs(ratios - 1.0) > 1e-9:
+            raise ValueError("transaction direction ratios must sum to 1.0")
+        external_ratio = self.inbound_transaction_ratio + self.outbound_transaction_ratio
+        if not 0.0 <= self.cross_border_ratio <= external_ratio:
+            raise ValueError("cross_border_ratio must fit within external traffic")
 
     @property
     def world_start(self) -> datetime:
@@ -73,12 +97,19 @@ class GeneratorConfig:
             "max_accounts": self.max_accounts,
             "window_days": self.window_days,
             "base_currency": self.base_currency,
+            "home_bank_id": self.home_bank_id,
+            "n_external_accounts": self.n_external_accounts,
+            "internal_transaction_ratio": self.internal_transaction_ratio,
+            "inbound_transaction_ratio": self.inbound_transaction_ratio,
+            "outbound_transaction_ratio": self.outbound_transaction_ratio,
+            "cross_border_ratio": self.cross_border_ratio,
             "output_dir": str(self.output_dir),
             "world_end": self.world_end.isoformat(),
             "world_start": self.world_start.isoformat(),
             "n_suspicious_scenarios": self.n_suspicious_scenarios,
             "n_lookalike_scenarios": self.n_lookalike_scenarios,
             "inject_incomplete_evidence": self.inject_incomplete_evidence,
+            "domestic_bank_ids": list(self.domestic_bank_ids),
             "crypto_platform_bank_id": self.crypto_platform_bank_id,
             "high_risk_foreign_bank_id": self.high_risk_foreign_bank_id,
             "normal_foreign_countries": list(self.normal_foreign_countries),
