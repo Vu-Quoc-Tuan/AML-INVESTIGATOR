@@ -195,6 +195,12 @@ class DataRepository:
     def is_loaded(self) -> bool:
         return self._loaded
 
+    @property
+    def transaction_graph(self) -> nx.MultiDiGraph:
+        """Read-only access to the frozen transaction graph."""
+        assert self.__transaction_graph is not None, "Repository not loaded"
+        return self.__transaction_graph
+
     def load(self) -> DataRepository:
         """Atomically load, validate, index, and build immutable graph state."""
 
@@ -734,7 +740,7 @@ class DataRepository:
     @staticmethod
     def _defensive_frame(frame: pd.DataFrame) -> pd.DataFrame:
         copied = frame.copy(deep=True)
-        for column in copied.select_dtypes(include=["object", "str"]).columns:
+        for column in copied.select_dtypes(include=["object", "string"]).columns:
             copied[column] = copied[column].map(deepcopy)
         return copied
 
