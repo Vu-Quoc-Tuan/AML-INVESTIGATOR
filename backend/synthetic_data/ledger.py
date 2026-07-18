@@ -1,86 +1,76 @@
-"""Ledger helpers for strict chronological replay."""
+"""Strict replay helpers for the SHB side of the observed ledger."""
 
 from __future__ import annotations
 
+from datetime import timedelta
+
+from synthetic_data.models import AccountReferenceType, Channel, TransactionType
 from synthetic_data.world import WorldState
 
 
 def fund_ledger_deficits(world: WorldState) -> int:
-    """Materialise opening-window funding transactions for replay deficits.
+    """Insert visible inbound funding immediately before an SHB replay deficit."""
+    from synthetic_data.normal_transaction_generator import create_transaction
 
-    Unlike the old reconciliation approach, this never changes a behavioral
-    profile's generated ``initial_balance`` after observing future activity.
-    """
-    txns = sorted(
+    balances = {
+        account.account_id: account.initial_balance
+        for account in world.accounts.values()
+    }
+    settlement = world.external_accounts["EXT-ACC-SETTLEMENT-001"]
+    inserted = 0
+    transactions = sorted(
         world.transactions.values(),
-        key=lambda t: (t.occurred_at, t.transaction_id),
+        key=lambda item: (item.occurred_at, item.transaction_id),
     )
-
-    # Collect all account ids that appear
-    account_ids = set(world.accounts) | set(world.demo_accounts)
-    for t in txns:
-        account_ids.add(t.source_account_id)
-        account_ids.add(t.destination_account_id)
-
-    # Start from declared initials and calculate each required liquidity gap.
-    initial = {}
-    for aid in account_ids:
-        acc = world.get_account(aid)
-        initial[aid] = acc.initial_balance if acc else 0
-
-    # Simulate with current initials; track minimum balance per account
-    bal = dict(initial)
-    min_bal = dict(initial)
-    for t in txns:
-        bal[t.source_account_id] = bal.get(t.source_account_id, 0) - t.amount
-        bal[t.destination_account_id] = bal.get(t.destination_account_id, 0) + t.amount
-        s = t.source_account_id
-        min_bal[s] = min(min_bal.get(s, 0), bal[s])
-        d = t.destination_account_id
-        min_bal[d] = min(min_bal.get(d, bal[d]), bal[d])
-
-    required: dict[str, int] = {}
-    for aid, mb in min_bal.items():
-        acc = world.get_account(aid)
-        if acc is None:
-            continue
-        floor = -acc.overdraft_limit if acc.allow_overdraft else 0
-        if mb < floor:
-            required[aid] = floor - mb
-
-    if not required:
-        return 0
-
-    # Import here to avoid a module cycle at import time.
-    from synthetic_data.normal_transaction_generator import fund_account
-
-    for aid in sorted(required):
-        fund_account(world, aid, required[aid], reason="opening-window-liquidity")
-    return len(required)
+    for transaction in transactions:
+        if transaction.source_account_type == AccountReferenceType.INTERNAL_SHB:
+            account = world.accounts[transaction.source_account_ref]
+            floor = -account.overdraft_limit if account.allow_overdraft else 0
+            projected = balances[account.account_id] - transaction.amount
+            if projected < floor:
+                shortfall = floor - projected
+                funding_time = max(
+                    account.opened_at + timedelta(seconds=1),
+                    transaction.occurred_at - timedelta(seconds=1),
+                )
+                created = create_transaction(
+                    world,
+                    settlement,
+                    account,
+                    shortfall,
+                    funding_time,
+                    transaction_type=TransactionType.TRANSFER,
+                    channel=Channel.API,
+                    purpose_code="LOAN",
+                    description="DECLARED-FUNDING-LEDGER-RECONCILE",
+                    evidence_source="INTERBANK_PAYMENT_MESSAGE",
+                )
+                if created is None:
+                    raise RuntimeError(
+                        f"Unable to reconcile SHB balance for {account.account_id}"
+                    )
+                balances[account.account_id] += shortfall
+                inserted += 1
+            balances[account.account_id] -= transaction.amount
+        if transaction.destination_account_type == AccountReferenceType.INTERNAL_SHB:
+            balances[transaction.destination_account_ref] += transaction.amount
+    return inserted
 
 
 def strict_replay_ok(world: WorldState) -> list[str]:
-    """Return list of error strings if replay goes negative; empty if OK."""
+    balances = {account.account_id: account.initial_balance for account in world.accounts.values()}
     errors: list[str] = []
-    bal: dict[str, int] = {}
-    for a in world.accounts.values():
-        bal[a.account_id] = a.initial_balance
-    for a in world.demo_accounts.values():
-        bal[a.account_id] = a.initial_balance
-    txns = sorted(
-        world.transactions.values(),
-        key=lambda t: (t.occurred_at, t.transaction_id),
-    )
-    for t in txns:
-        bal[t.source_account_id] = bal.get(t.source_account_id, 0) - t.amount
-        bal[t.destination_account_id] = bal.get(t.destination_account_id, 0) + t.amount
-        acc = world.get_account(t.source_account_id)
-        if acc is None:
-            continue
-        floor = -acc.overdraft_limit if acc.allow_overdraft else 0
-        if bal[t.source_account_id] < floor:
-            if len(errors) < 8:
+    for transaction in sorted(
+        world.transactions.values(), key=lambda item: (item.occurred_at, item.transaction_id)
+    ):
+        if transaction.source_account_type == AccountReferenceType.INTERNAL_SHB:
+            source = world.accounts[transaction.source_account_ref]
+            balances[source.account_id] -= transaction.amount
+            floor = -source.overdraft_limit if source.allow_overdraft else 0
+            if balances[source.account_id] < floor:
                 errors.append(
-                    f"{t.source_account_id} at {t.transaction_id}: {bal[t.source_account_id]}"
+                    f"{source.account_id} at {transaction.transaction_id}: {balances[source.account_id]}"
                 )
+        if transaction.destination_account_type == AccountReferenceType.INTERNAL_SHB:
+            balances[transaction.destination_account_ref] += transaction.amount
     return errors

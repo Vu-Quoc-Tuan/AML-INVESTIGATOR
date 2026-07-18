@@ -22,6 +22,7 @@ from synthetic_data.models import (
     Customer,
     Disposition,
     EntityType,
+    KYCDocument,
     ScenarioType,
     TransactionType,
     VerificationStatus,
@@ -47,6 +48,11 @@ class ScenarioSpec:
     explanation: str = ""
     typology_tags: list[str] = field(default_factory=list)
     notes: dict[str, Any] = field(default_factory=dict)
+    internal_account_ids: list[str] = field(default_factory=list)
+    external_account_ids: list[str] = field(default_factory=list)
+    observable_internal_facts: list[str] = field(default_factory=list)
+    observable_external_facts: list[str] = field(default_factory=list)
+    hidden_world_facts: list[str] = field(default_factory=list)
 
 
 def _pick(rng, seq):
@@ -215,7 +221,7 @@ def inject_rapid_fan_in_pass_through(world: WorldState) -> ScenarioSpec:
     t0 = cfg.world_end - timedelta(days=rng.randint(5, 20))
     t0 = t0.replace(hour=14, minute=0, second=0, microsecond=0)
 
-    n_src = min(10, max(3, len(world.customers) // 20))
+    n_src = 6
     source_customers = _take_customers(
         world, n_src, preferred=BehavioralProfile.SALARIED_INDIVIDUAL
     )
@@ -258,32 +264,25 @@ def inject_rapid_fan_in_pass_through(world: WorldState) -> ScenarioSpec:
         initial_balance=5_000_000,
     )
 
-    _inject_incomplete_ownership_chain(world, shell.company_id)
-    to_remove = [
-        did
-        for did, d in world.kyc_documents.items()
-        if d.entity_id == shell.company_id and d.document_type == "UBO_DECLARATION"
-    ]
-    for did in to_remove:
-        del world.kyc_documents[did]
-    for o in world.ownerships.values():
-        if o.source_document_id in to_remove or (
-            o.owned_company_id == shell.company_id
-            and o.source_document_id
-            and o.source_document_id not in world.kyc_documents
-        ):
-            o.source_document_id = None
-            o.verified = False
+    _ensure_verified_company_kyc_and_ownership(world, shell.company_id)
 
-    crypto = world.demo_accounts["ACCT-CRYPTO-DEMO-001"]
-    foreign = world.demo_accounts["ACCT-FOREIGN-HR-001"]
+    crypto = world.external_accounts["EXT-ACC-CRYPTO-001"]
+    foreign = world.external_accounts["EXT-ACC-HR-001"]
+    external_sources = rng.sample(
+        [
+            account
+            for account in world.external_accounts.values()
+            if account.country_code == "VN"
+            and account.external_account_id != "EXT-ACC-SETTLEMENT-001"
+        ],
+        4,
+    )
 
     suspicious_ids: list[str] = []
     per_amount = 500_000_000
 
     for i, acc in enumerate(source_accounts):
         ts = t0 - timedelta(hours=2, minutes=i * 3)
-        ensure_balance(world, crypto.account_id, per_amount + 1)
         txn = create_transaction(
             world,
             crypto,
@@ -291,7 +290,7 @@ def inject_rapid_fan_in_pass_through(world: WorldState) -> ScenarioSpec:
             per_amount,
             ts,
             channel=Channel.API,
-            purpose_code="TRANSFER",
+            purpose_code="CRYPTO_FUNDING",
             description=f"CRYPTO-WD-{rng.randint(100000, 999999)}",
             device_id=shared_device if i < 4 else None,
             source_ip=shared_ip if i < 4 else None,
@@ -300,9 +299,11 @@ def inject_rapid_fan_in_pass_through(world: WorldState) -> ScenarioSpec:
         if txn:
             suspicious_ids.append(txn.transaction_id)
 
-    for i, acc in enumerate(source_accounts):
+    fan_in_sources = [*source_accounts, *external_sources]
+    for i, acc in enumerate(fan_in_sources):
         ts = t0 + timedelta(seconds=i * 28)
-        ensure_balance(world, acc.account_id, per_amount)
+        if isinstance(acc, Account):
+            ensure_balance(world, acc.account_id, per_amount)
         txn = create_transaction(
             world,
             acc,
@@ -310,22 +311,26 @@ def inject_rapid_fan_in_pass_through(world: WorldState) -> ScenarioSpec:
             per_amount,
             ts,
             channel=Channel.MOBILE if i % 2 == 0 else Channel.INTERNET,
-            purpose_code="TRANSFER",
+            purpose_code="FAN_IN",
             description=f"INV-CAPITAL-{rng.randint(1000, 9999)}",
             device_id=(
                 shared_device
-                if i < 4
-                else world.entity_devices.get(acc.owner_entity_id, [None])[0]
+                if isinstance(acc, Account) and i < 4
+                else (
+                    world.entity_devices.get(acc.owner_entity_id, [None])[0]
+                    if isinstance(acc, Account)
+                    else None
+                )
             ),
-            source_ip=shared_ip if i < 4 else None,
+            source_ip=shared_ip if isinstance(acc, Account) and i < 4 else None,
             force=True,
         )
         if txn:
             suspicious_ids.append(txn.transaction_id)
 
-    total_in = per_amount * len(source_accounts)
+    total_in = per_amount * len(fan_in_sources)
     pass_through = int(total_in * 0.992)
-    last_fan = t0 + timedelta(seconds=(len(source_accounts) - 1) * 28)
+    last_fan = t0 + timedelta(seconds=(len(fan_in_sources) - 1) * 28)
     out_ts = last_fan + timedelta(seconds=121)
     ensure_balance(world, shell_acc.account_id, pass_through)
     out_txn = create_transaction(
@@ -335,7 +340,7 @@ def inject_rapid_fan_in_pass_through(world: WorldState) -> ScenarioSpec:
         pass_through,
         out_ts,
         channel=Channel.SWIFT,
-        purpose_code="FX",
+        purpose_code="PASS_THROUGH",
         description="OVERSEAS-SETTLEMENT-DEMO",
         transaction_type=TransactionType.FX,
         force=True,
@@ -350,26 +355,56 @@ def inject_rapid_fan_in_pass_through(world: WorldState) -> ScenarioSpec:
         start_time=t0 - timedelta(hours=3),
         end_time=end_time,
         involved_account_ids=[a.account_id for a in source_accounts]
-        + [shell_acc.account_id, crypto.account_id, foreign.account_id],
+        + [shell_acc.account_id]
+        + [a.account_id for a in external_sources]
+        + [crypto.account_id, foreign.account_id],
         involved_entity_ids=[c.customer_id for c in source_customers]
-        + [shell.company_id, "ENT-CRYPTO-PLATFORM-DEMO", "ENT-FOREIGN-HR-BANK"],
+        + [shell.company_id],
         suspicious_transaction_ids=suspicious_ids,
         expected_alert_type="RAPID_FAN_IN_PASS_THROUGH",
         expected_case_disposition=Disposition.ESCALATE_FOR_SAR_REVIEW,
         explanation=(
-            "Ten personal accounts each transferred ~500M VND into a newly opened "
+            "Six SHB personal accounts and four external domestic accounts each "
+            "transferred ~500M VND into a newly opened "
             "company account within five minutes. The company declared only 300M VND "
             "monthly turnover. Approximately 121 seconds later, 99.2% of received "
-            "funds were sent to a high-risk foreign bank demo. Source accounts were "
-            "funded from the same crypto-platform demo; several shared device/IP. "
-            "Ultimate beneficial ownership documentation for the company is missing."
+            "funds were sent to a high-risk foreign bank demo. Six internal source "
+            "accounts were funded from the same crypto-platform "
+            "demo; several shared SHB-observed device/IP. External sources have "
+            "payment-message-only visibility. "
+            "The company has verified SHB KYC and declared UBO evidence."
         ),
-        typology_tags=["fan_in", "pass_through", "crypto_source", "rapid_outflow", "missing_ubo"],
+        typology_tags=[
+            "fan_in",
+            "pass_through",
+            "crypto_source",
+            "rapid_outflow",
+            "new_corporate_account",
+        ],
         notes={
             "declared_monthly_turnover": 300_000_000,
             "pass_through_ratio": 0.992,
-            "source_count": len(source_accounts),
+            "source_count": len(fan_in_sources),
+            "internal_source_count": len(source_accounts),
+            "external_source_count": len(external_sources),
         },
+        internal_account_ids=[a.account_id for a in source_accounts]
+        + [shell_acc.account_id],
+        external_account_ids=[a.account_id for a in external_sources]
+        + [crypto.account_id, foreign.account_id],
+        observable_internal_facts=[
+            "Six SHB personal accounts received crypto-platform inbound payments.",
+            "Six SHB accounts joined a ten-source fan-in to a new SHB company account.",
+            "The SHB company has verified KYC and declared UBO evidence.",
+            "The SHB company sent 99.2 percent outbound after 121 seconds.",
+        ],
+        observable_external_facts=[
+            "Four domestic external originators were observed through payment messages.",
+            "The outbound beneficiary is held at a high-risk foreign external bank.",
+        ],
+        hidden_world_facts=[
+            "The four external originators were coordinated with the six SHB senders."
+        ],
     )
 
 
@@ -530,7 +565,7 @@ def inject_incomplete_evidence(world: WorldState) -> ScenarioSpec:
             o.verified = False
             o.source_document_id = None
 
-    foreign = world.demo_accounts["ACCT-FOREIGN-HR-001"]
+    foreign = world.external_accounts["EXT-ACC-HR-001"]
     amount = 200_000_000
     sus_ids = []
     for i, (_cust, acc) in enumerate(sources):
@@ -758,7 +793,7 @@ def inject_trade_settlement_lookalike(world: WorldState) -> ScenarioSpec:
     generate_ownership_for_company(
         world, trade.company_id, incomplete_ubo=False, replace_existing=True
     )
-    foreign = world.demo_accounts["ACCT-FOREIGN-HR-001"]
+    foreign = world.external_accounts["EXT-ACC-HR-001"]
 
     inv_amount = 850_000_000
     ensure_balance(world, trade_acc.account_id, inv_amount)
@@ -841,10 +876,9 @@ def inject_mule_layering(world: WorldState) -> ScenarioSpec:
         chain_accounts.append(a)
         chain_entities.append(c.customer_id)
 
-    crypto = world.demo_accounts["ACCT-CRYPTO-DEMO-001"]
-    foreign = world.demo_accounts["ACCT-FOREIGN-HR-001"]
+    crypto = world.external_accounts["EXT-ACC-CRYPTO-001"]
+    foreign = world.external_accounts["EXT-ACC-HR-001"]
     sus = []
-    ensure_balance(world, crypto.account_id, amount)
     t = create_transaction(
         world,
         crypto,
@@ -906,6 +940,68 @@ def inject_mule_layering(world: WorldState) -> ScenarioSpec:
             "high-risk foreign bank — classic layering via mule accounts."
         ),
         typology_tags=["layering", "mule", "crypto_source", "rapid_chain"],
+    )
+
+
+def _ensure_verified_company_kyc_and_ownership(
+    world: WorldState,
+    company_id: str,
+) -> None:
+    """Guarantee complete SHB-held company KYC and direct verified UBO evidence."""
+    company = world.companies[company_id]
+    valid_until = world.config.world_end.date() + timedelta(days=365)
+
+    def ensure_verified_document(document_type: str) -> None:
+        existing = [
+            document
+            for document in world.kyc_documents.values()
+            if document.entity_id == company_id
+            and document.document_type == document_type
+            and document.verification_status == VerificationStatus.VERIFIED
+        ]
+        if existing:
+            return
+        number_prefix = "UBO" if document_type == "UBO_DECLARATION" else "BIZ"
+        document = KYCDocument(
+            document_id=world.ids.document(),
+            entity_id=company_id,
+            document_type=document_type,
+            document_number=f"{number_prefix}-{company.registration_number}-VERIFIED",
+            issued_at=company.incorporation_date,
+            expires_at=valid_until,
+            extracted_fields={
+                "legal_name": company.legal_name,
+                "registration_number": company.registration_number,
+                "declared_ubo_complete": document_type == "UBO_DECLARATION",
+                "source": "SHB_KYC_FILE",
+            },
+            verification_status=VerificationStatus.VERIFIED,
+        )
+        world.kyc_documents[document.document_id] = document
+
+    ensure_verified_document("BUSINESS_LICENSE")
+    ensure_verified_document("UBO_DECLARATION")
+
+    ownership_relationship_types = {
+        "UBO",
+        "SHAREHOLDER",
+        "PARENT_COMPANY",
+        "UNRESOLVED_UBO_CHAIN",
+    }
+    for relationship_id in [
+        relationship_id
+        for relationship_id, relationship in world.relationships.items()
+        if relationship.target_entity_id == company_id
+        and relationship.relationship_type in ownership_relationship_types
+    ]:
+        del world.relationships[relationship_id]
+
+    generate_ownership_for_company(
+        world,
+        company_id,
+        incomplete_ubo=False,
+        force_layers=1,
+        replace_existing=True,
     )
 
 
