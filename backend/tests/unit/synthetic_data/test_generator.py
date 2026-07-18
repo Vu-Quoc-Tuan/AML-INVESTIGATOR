@@ -6,8 +6,6 @@ import hashlib
 import json
 from collections import Counter
 from datetime import timedelta
-from pathlib import Path
-
 import pytest
 
 from synthetic_data.config import GROUND_TRUTH_FORBIDDEN_COLUMNS, GeneratorConfig

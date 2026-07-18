@@ -1,0 +1,18 @@
+name: aml-investigator
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: aml-investigator-backend:local
+    restart: "no"
+    # The backend currently validates and warms its shared data repository,
+    # then exits. Add the FastAPI port and Uvicorn command with the web app.
+    command:
+      - python
+      - -c
+      - >-
+        from app.main import initialize_backend;
+        initialize_backend();
+        print('Backend scaffold initialized')
