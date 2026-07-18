@@ -195,6 +195,12 @@ class DataRepository:
     def is_loaded(self) -> bool:
         return self._loaded
 
+    @property
+    def transaction_graph(self) -> nx.MultiDiGraph:
+        """Read-only access to the frozen transaction graph."""
+        assert self.__transaction_graph is not None, "Repository not loaded"
+        return self.__transaction_graph
+
     def load(self) -> DataRepository:
         """Atomically load, validate, index, and build immutable graph state."""
 

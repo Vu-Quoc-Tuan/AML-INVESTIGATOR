@@ -16,7 +16,7 @@ def trace_funds(
 ) -> TraceFundsOutput:
     repo = get_initialized_data_repository()
     # Access the full transaction graph directly
-    graph = repo._DataRepository__transaction_graph
+    graph = repo.transaction_graph
     
     dir_enum = TraceDirection(direction) if isinstance(direction, str) else direction
     

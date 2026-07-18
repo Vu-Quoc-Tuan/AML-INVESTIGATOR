@@ -23,7 +23,7 @@ def build_case_subgraph(
             account_ids.update(accs)
             
     # 2. Expand transaction graph to max_depth
-    tx_graph = repo._DataRepository__transaction_graph
+    tx_graph = repo.transaction_graph
     neighborhood = set(account_ids)
     current_layer = set(account_ids)
     

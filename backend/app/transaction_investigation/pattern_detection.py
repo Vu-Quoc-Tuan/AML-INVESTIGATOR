@@ -151,7 +151,7 @@ def detect_structuring(account_id: str, time_window_hours: float = 24.0) -> Dete
 
 def detect_cycles(seed_account_id: str, max_depth: int = 5) -> DetectCyclesOutput:
     repo = get_initialized_data_repository()
-    graph = repo._DataRepository__transaction_graph
+    graph = repo.transaction_graph
     
     if seed_account_id not in graph:
         return DetectCyclesOutput(cycles=[], cycle_findings=[])
@@ -211,7 +211,7 @@ def detect_cycles(seed_account_id: str, max_depth: int = 5) -> DetectCyclesOutpu
 
 def find_common_funding_sources(account_ids: list[str], lookback_period_hours: float = 24.0) -> FindCommonSourcesOutput:
     repo = get_initialized_data_repository()
-    graph = repo._DataRepository__transaction_graph
+    graph = repo.transaction_graph
     
     sources_map = {}
     for acc in account_ids:
@@ -246,7 +246,7 @@ def find_common_funding_sources(account_ids: list[str], lookback_period_hours: f
 
 def find_common_destinations(account_ids: list[str], lookforward_period_hours: float = 24.0) -> FindCommonDestinationsOutput:
     repo = get_initialized_data_repository()
-    graph = repo._DataRepository__transaction_graph
+    graph = repo.transaction_graph
     
     dest_map = {}
     for acc in account_ids:
@@ -378,7 +378,7 @@ def find_coordinated_amounts(account_id: str, time_window_hours: float = 24.0) -
 
 def detect_round_tripping(account_id: str, time_window_hours: float = 24.0) -> DetectRoundTrippingOutput:
     repo = get_initialized_data_repository()
-    graph = repo._DataRepository__transaction_graph
+    graph = repo.transaction_graph
     
     findings = []
     
