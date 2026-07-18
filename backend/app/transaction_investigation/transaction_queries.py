@@ -2,7 +2,6 @@ from datetime import datetime, timedelta
 import pandas as pd
 from typing import Any
 
-# pyrefly: ignore [missing-import]
 from app.data.provider import get_initialized_data_repository
 from app.schemas.common import TransactionDirection, CounterpartySummary
 from app.schemas.tools import GetAccountTransactionsOutput
