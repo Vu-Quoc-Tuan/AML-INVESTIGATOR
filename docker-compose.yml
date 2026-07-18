@@ -1,29 +1,36 @@
+# Full architecture (production-ish):
+#
+#   Browser (FE on Vercel)  --HTTPS:443-->  https://aml-api.vutuan.indevs.in
+#         Cloudflare Tunnel  ------------------>  127.0.0.1:8000 (this BE service)
+#
+# Frontend is NOT hosted here — deploy FE to Vercel (see .github/workflows/cd.yml).
+
 name: aml-investigator
 
 services:
-  frontend:
+  backend:
     build:
-      context: ./frontend
+      context: ./backend
       dockerfile: Dockerfile
-    image: aml-investigator-frontend:local
+    image: aml-investigator-backend:local
     restart: unless-stopped
     ports:
-      # Loopback only — expose publicly via Cloudflare Tunnel / reverse proxy.
-      - "127.0.0.1:3000:3000"
+      # Loopback only — Cloudflare Tunnel / cloudflared connects here.
+      - "127.0.0.1:8000:8000"
     environment:
       NODE_ENV: production
-      NEXT_TELEMETRY_DISABLED: "1"
-      HOSTNAME: "0.0.0.0"
-      PORT: "3000"
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://*.vercel.app,http://localhost:3000}
+      # Optional override if you use a fixed FE domain later:
+      # CORS_ORIGINS: https://aml.vutuan.indevs.in,https://*.vercel.app
     healthcheck:
       test:
         [
           "CMD",
-          "node",
-          "-e",
-          "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)",
         ]
       interval: 10s
       timeout: 5s
       retries: 6
-      start_period: 25s
+      start_period: 30s

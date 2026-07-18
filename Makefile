@@ -1,13 +1,10 @@
 PYTHON ?= $(if $(wildcard backend/.venv/bin/python),backend/.venv/bin/python,python3)
-FRONTEND_IMAGE ?= aml-investigator-frontend:local
+BACKEND_IMAGE ?= aml-investigator-backend:local
 COMPOSE_PROJECT_NAME ?= aml-investigator
 
-.PHONY: lint test ci frontend-lint frontend-build frontend-docker-build docker-config docker-up-frontend docker-down
+.PHONY: lint ci frontend-lint frontend-build backend-docker-build docker-config docker-up-backend docker-down
 
 lint: frontend-lint
-
-test:
-	@echo "No automated test suite wired yet"
 
 frontend-lint:
 	cd frontend && npm run lint
@@ -15,16 +12,16 @@ frontend-lint:
 frontend-build:
 	cd frontend && npm run build
 
-frontend-docker-build:
-	docker build --file frontend/Dockerfile --tag $(FRONTEND_IMAGE) frontend
+backend-docker-build:
+	docker build --file backend/Dockerfile --tag $(BACKEND_IMAGE) backend
 
 docker-config:
 	docker compose -f docker-compose.yml config --quiet
 
-docker-up-frontend:
-	docker compose -p $(COMPOSE_PROJECT_NAME) up --detach --build frontend
+docker-up-backend:
+	docker compose -p $(COMPOSE_PROJECT_NAME) up --detach --build backend
 
 docker-down:
 	docker compose -p $(COMPOSE_PROJECT_NAME) down
 
-ci: frontend-lint frontend-build docker-config frontend-docker-build
+ci: frontend-lint frontend-build docker-config

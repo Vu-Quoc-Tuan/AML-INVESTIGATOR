@@ -1,142 +1,105 @@
-name: CD Frontend
+name: CD Frontend (Vercel)
 
-# Auto-deploy frontend when this branch is pushed. No GitHub Environment /
-# secrets setup required — uses self-hosted runner labels only.
+# Architecture:
+#   Browser → FE on Vercel (HTTPS :443)
+#   FE → https://aml-api.vutuan.indevs.in (Cloudflare Tunnel)
+#   Tunnel → 127.0.0.1:8000 (BE Docker on self-hosted server)
+#
+# This workflow deploys ONLY the Next.js frontend to Vercel on push.
+# Backend stays on the self-hosted runner / Docker + Cloudflare.
+
 on:
   push:
     branches:
       - feat/frontend-cd
     paths:
       - "frontend/**"
-      - "docker-compose.yml"
       - ".github/workflows/cd.yml"
-      - "Makefile"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: aml-frontend-dev
+  group: aml-frontend-vercel
   cancel-in-progress: true
 
 jobs:
-  deploy-frontend:
-    name: Deploy frontend (self-hosted)
-    runs-on:
-      - self-hosted
-      - Linux
-      - X64
-      - aml
-    timeout-minutes: 30
+  deploy-vercel:
+    name: Deploy frontend to Vercel
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
-      COMPOSE_PROJECT_NAME: aml-investigator
-      LOCAL_HEALTH_URL: http://127.0.0.1:3000/
-      # Optional: set repo/org variable PUBLIC_FRONTEND_URL to also check public tunnel.
-      PUBLIC_FRONTEND_URL: ${{ vars.PUBLIC_FRONTEND_URL }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Verify runner tooling
+      - name: Resolve API base URL
         shell: bash
         run: |
           set -euo pipefail
-          echo "Runner: ${RUNNER_NAME:-unknown}"
-          docker version
-          docker compose version
+          # Public BE via Cloudflare Tunnel → 127.0.0.1:8000 on the server.
+          value="${{ vars.NEXT_PUBLIC_API_BASE_URL }}"
+          if [[ -z "$value" ]]; then
+            value="https://aml-api.vutuan.indevs.in"
+          fi
+          echo "NEXT_PUBLIC_API_BASE_URL=$value" >> "$GITHUB_ENV"
 
-      - name: Validate frontend Compose contract
+      - name: Require Vercel secrets
         shell: bash
         run: |
           set -euo pipefail
-          compose_json="$RUNNER_TEMP/aml-compose.json"
-          docker compose -p "$COMPOSE_PROJECT_NAME" config --format json > "$compose_json"
-          COMPOSE_JSON="$compose_json" python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          config = json.loads(Path(os.environ["COMPOSE_JSON"]).read_text(encoding="utf-8"))
-          frontend = config.get("services", {}).get("frontend")
-          if frontend is None:
-              raise SystemExit("Compose must define a frontend service")
-
-          ports = frontend.get("ports", [])
-          publishes_loopback = any(
-              str(port.get("target")) == "3000"
-              and str(port.get("published")) == "3000"
-              and port.get("host_ip") == "127.0.0.1"
-              for port in ports
-              if isinstance(port, dict)
-          )
-          if not publishes_loopback:
-              raise SystemExit(
-                  "frontend must publish 127.0.0.1:3000:3000 before deployment"
-              )
-
-          environment = frontend.get("environment", {})
-          if not isinstance(environment, dict):
-              raise SystemExit("frontend environment must use Compose mapping syntax")
-          if environment.get("HOSTNAME") != "0.0.0.0":
-              raise SystemExit("frontend must set HOSTNAME=0.0.0.0 for container networking")
-          PY
-
-      - name: Build and deploy frontend container
-        run: >-
-          docker compose -p "$COMPOSE_PROJECT_NAME"
-          up --detach --build --remove-orphans frontend
-
-      - name: Wait for local frontend health
-        shell: bash
-        run: |
-          set -euo pipefail
-          for attempt in {1..36}; do
-            if curl --fail --silent --max-time 5 "$LOCAL_HEALTH_URL" > /dev/null; then
-              echo "Local frontend health check passed on attempt $attempt."
-              exit 0
-            fi
-            sleep 2
-          done
-
-          echo "::error title=Local health check failed::$LOCAL_HEALTH_URL did not become healthy within ~72 seconds."
-          docker compose -p "$COMPOSE_PROJECT_NAME" ps
-          docker compose -p "$COMPOSE_PROJECT_NAME" logs --tail 200 frontend
-          exit 1
-
-      - name: Verify public endpoint (optional)
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${PUBLIC_FRONTEND_URL:-}" ]]; then
-            echo "PUBLIC_FRONTEND_URL not set — skip public check."
-            exit 0
+          missing=()
+          [[ -n "${{ secrets.VERCEL_TOKEN }}" ]] || missing+=(VERCEL_TOKEN)
+          [[ -n "${VERCEL_ORG_ID:-}" ]] || missing+=(VERCEL_ORG_ID)
+          [[ -n "${VERCEL_PROJECT_ID:-}" ]] || missing+=(VERCEL_PROJECT_ID)
+          if ((${#missing[@]})); then
+            echo "::error title=Missing GitHub secrets::Set repository secrets: ${missing[*]}"
+            echo "One-time setup:"
+            echo "  1) npm i -g vercel && vercel login && cd frontend && vercel link"
+            echo "  2) Copy orgId / projectId from frontend/.vercel/project.json"
+            echo "  3) Create token at https://vercel.com/account/tokens"
+            echo "  4) Add GitHub Actions secrets: VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID"
+            exit 1
           fi
 
-          for attempt in {1..10}; do
-            if curl --fail --silent --max-time 10 "$PUBLIC_FRONTEND_URL" > /dev/null; then
-              echo "Public frontend check passed on attempt $attempt."
-              exit 0
-            fi
-            sleep 3
-          done
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
-          echo "::warning title=Public health check failed::$PUBLIC_FRONTEND_URL unavailable (tunnel/DNS). Container is up locally."
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Pull Vercel project settings
+        working-directory: frontend
+        run: vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
+
+      - name: Build for Vercel
+        working-directory: frontend
+        run: vercel build --prod --token="${{ secrets.VERCEL_TOKEN }}"
+
+      - name: Deploy prebuilt production
+        id: deploy
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          url="$(vercel deploy --prebuilt --prod --token="${{ secrets.VERCEL_TOKEN }}")"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployed: $url"
 
       - name: Write deployment summary
         shell: bash
         run: |
           {
-            echo "## Frontend deployed"
+            echo "## Frontend deployed to Vercel"
             echo
-            echo "- Runner: \`${RUNNER_NAME:-self-hosted}\`"
-            echo "- Labels: \`self-hosted, Linux, X64, aml\`"
-            echo "- Compose project: \`$COMPOSE_PROJECT_NAME\`"
-            echo "- Local: \`$LOCAL_HEALTH_URL\`"
-            if [[ -n "${PUBLIC_FRONTEND_URL:-}" ]]; then
-              echo "- Public: \`$PUBLIC_FRONTEND_URL\`"
-            else
-              echo "- Public: not configured"
-            fi
+            echo "- URL: ${{ steps.deploy.outputs.url }}"
+            echo "- API (Cloudflare): \`$NEXT_PUBLIC_API_BASE_URL\`"
+            echo "- Flow: Browser → Vercel FE → Cloudflare tunnel → BE :8000"
             echo "- Ref: \`${GITHUB_REF_NAME}\` @ \`${GITHUB_SHA:0:7}\`"
           } >> "$GITHUB_STEP_SUMMARY"
