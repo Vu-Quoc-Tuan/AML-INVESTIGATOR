@@ -1,9 +1,9 @@
 from datetime import datetime
+
 import pandas as pd
-import networkx as nx
 
 from app.data.provider import get_initialized_data_repository
-from app.schemas.common import TraceDirection, FundPath, GraphSnapshot
+from app.schemas.common import FundPath, TraceDirection
 from app.schemas.tools import TraceFundsOutput
 
 
@@ -78,12 +78,14 @@ def trace_funds(
                 visited.add(neighbor)
                 queue.append((neighbor, depth + 1, new_path_nodes, new_path_txns, new_cum_amt, new_timestamps))
                 
-    # Build graph snapshot for the subgraph of all visited accounts
-    from app.services.serialization import graph_to_dict
+    # Build a typed GraphSnapshot for the subgraph of all visited accounts.
+    # graph_to_dict() only emits id/attributes bags and cannot validate as
+    # GraphSnapshot (which requires node_type / edge_type).
+    from app.services.serialization import graph_to_snapshot
+
     subgraph = repo.transaction_subgraph(list(visited))
-    snapshot_dict = graph_to_dict(subgraph)
-    snapshot = GraphSnapshot(**snapshot_dict)
-    
+    snapshot = graph_to_snapshot(subgraph)
+
     return TraceFundsOutput(
         paths=paths,
         visited_accounts=list(visited),
