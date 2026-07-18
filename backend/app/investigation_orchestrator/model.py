@@ -23,7 +23,7 @@ class ModelSettings(BaseSettings):
     api_key: SecretStr = Field(min_length=1, validation_alias="API_KEY")
     base_url: str = Field(min_length=1, validation_alias="BASE_URL")
     model_name: str = Field(
-        default="glm-5.2-free", min_length=1, validation_alias="MODEL_NAME"
+        default="mistral-large", min_length=1, validation_alias="MODEL_NAME"
     )
     temperature: float = Field(default=0, ge=0)
     timeout_seconds: float = Field(default=60, gt=0)
