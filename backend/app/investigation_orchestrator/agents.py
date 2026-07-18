@@ -31,14 +31,15 @@ from .prompts import (
     TRANSACTION_AGENT_PROMPT,
 )
 from .state import AgentOutput, InvestigationState
+from .soft_prompt import append_soft_prompt
 from .tool_registry import AgentName, ToolResult
 
 
-def build_planner_agent(model: Any) -> Any:
+def build_planner_agent(model: Any, *, soft_prompt: str | None = None) -> Any:
     return create_agent(
         model=model,
         tools=[],
-        system_prompt=PLANNER_PROMPT,
+        system_prompt=append_soft_prompt(PLANNER_PROMPT, soft_prompt),
         response_format=ToolStrategy(InvestigationPlanResponse),
     )
 
@@ -49,48 +50,71 @@ def _build_worker_agent(
     *,
     prompt: str,
     response_schema: type[WorkerAnalysisResponse] = WorkerAnalysisResponse,
+    soft_prompt: str | None = None,
 ) -> Any | None:
     if not tools:
         return None
     return create_agent(
         model=model,
         tools=list(tools),
-        system_prompt=prompt,
+        system_prompt=append_soft_prompt(prompt, soft_prompt),
         response_format=ToolStrategy(response_schema),
     )
 
 
-def build_transaction_agent(model: Any, tools: Sequence[BaseTool]) -> Any | None:
-    return _build_worker_agent(model, tools, prompt=TRANSACTION_AGENT_PROMPT)
+def build_transaction_agent(
+    model: Any,
+    tools: Sequence[BaseTool],
+    *,
+    soft_prompt: str | None = None,
+) -> Any | None:
+    return _build_worker_agent(
+        model, tools, prompt=TRANSACTION_AGENT_PROMPT, soft_prompt=soft_prompt
+    )
 
 
-def build_kyc_agent(model: Any, tools: Sequence[BaseTool]) -> Any | None:
-    return _build_worker_agent(model, tools, prompt=KYC_AGENT_PROMPT)
+def build_kyc_agent(
+    model: Any,
+    tools: Sequence[BaseTool],
+    *,
+    soft_prompt: str | None = None,
+) -> Any | None:
+    return _build_worker_agent(
+        model, tools, prompt=KYC_AGENT_PROMPT, soft_prompt=soft_prompt
+    )
 
 
-def build_screening_agent(model: Any, tools: Sequence[BaseTool]) -> Any | None:
+def build_screening_agent(
+    model: Any,
+    tools: Sequence[BaseTool],
+    *,
+    soft_prompt: str | None = None,
+) -> Any | None:
     return _build_worker_agent(
         model,
         tools,
         prompt=SCREENING_AGENT_PROMPT,
         response_schema=ScreeningAnalysisResponse,
+        soft_prompt=soft_prompt,
     )
 
 
-def build_behavior_mapper_agent(model: Any) -> Any:
+def build_behavior_mapper_agent(
+    model: Any, *, soft_prompt: str | None = None
+) -> Any:
     return create_agent(
         model=model,
         tools=[],
-        system_prompt=BEHAVIOR_MAPPER_PROMPT,
+        system_prompt=append_soft_prompt(BEHAVIOR_MAPPER_PROMPT, soft_prompt),
         response_format=ToolStrategy(BehaviorMappingResponse),
     )
 
 
-def build_report_agent(model: Any) -> Any:
+def build_report_agent(model: Any, *, soft_prompt: str | None = None) -> Any:
     return create_agent(
         model=model,
         tools=[],
-        system_prompt=REPORT_AGENT_PROMPT,
+        system_prompt=append_soft_prompt(REPORT_AGENT_PROMPT, soft_prompt),
         response_format=ToolStrategy(InvestigationReportResponse),
     )
 
