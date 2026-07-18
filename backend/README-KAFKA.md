@@ -36,7 +36,9 @@ cd backend
 .venv/bin/python scripts/run_kafka_ingestion.py
 ```
 
-Mở terminal thứ ba để phát 10 giao dịch realtime, mỗi giây một giao dịch:
+Mở terminal thứ ba để phát 10 giao dịch realtime, mỗi giây một giao dịch.
+Mock load `data/generated/accounts.csv` + `external_accounts.csv` và chọn cặp tài khoản thật
+(để downstream KYC/investigation tra cứu được entity):
 
 ```bash
 cd backend

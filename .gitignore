@@ -4,6 +4,9 @@ backend/.env
 **/.pytest_cache/
 backend/data/generated_smoke/
 backend/data/opensanctions/raw/
+backend/data/detection_queue.db
+backend/data/detection_queue.db-wal
+backend/data/detection_queue.db-shm
 # Python environments and generated artifacts
 backend/.venv/
 __pycache__/

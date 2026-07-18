@@ -24,3 +24,18 @@ def build_consumer(settings: KafkaSettings) -> KafkaConsumer:
         enable_auto_commit=False,
         auto_offset_reset="earliest",
     )
+
+
+def build_validated_consumer(
+    settings: KafkaSettings, *, group_id: str, client_id: str
+) -> KafkaConsumer:
+    """Build the independent consumer used by realtime detection."""
+
+    return KafkaConsumer(
+        settings.validated_topic,
+        bootstrap_servers=list(settings.bootstrap_servers),
+        client_id=client_id,
+        group_id=group_id,
+        enable_auto_commit=False,
+        auto_offset_reset="earliest",
+    )

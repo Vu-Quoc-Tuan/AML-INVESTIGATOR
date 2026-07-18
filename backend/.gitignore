@@ -10,3 +10,6 @@ build/
 .env
 .env.*
 !.env.example
+data/detection_queue.db
+data/detection_queue.db-wal
+data/detection_queue.db-shm

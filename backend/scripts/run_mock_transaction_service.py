@@ -16,10 +16,22 @@ from app.streaming.mock_service import run_mock_publisher  # noqa: E402
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Publish valid mock AML transactions to Kafka")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Publish valid mock AML transactions to Kafka using real account ids "
+            "from data/generated accounts CSVs"
+        )
+    )
     parser.add_argument("--interval", type=float, default=1.0, help="Seconds between events")
     parser.add_argument("--limit", type=int, default=None, help="Stop after N events")
     parser.add_argument("--seed", type=int, default=42, help="Deterministic data seed")
+    parser.add_argument(
+        "--data-path",
+        type=Path,
+        default=None,
+        help="Directory containing accounts.csv and external_accounts.csv "
+        "(default: backend/data/generated)",
+    )
     return parser.parse_args()
 
 
@@ -36,6 +48,7 @@ def main() -> int:
         limit=args.limit,
         seed=args.seed,
         stop_requested=stop.is_set,
+        data_path=args.data_path,
     )
     logging.info("Mock publisher stopped published=%s", count)
     return 0
