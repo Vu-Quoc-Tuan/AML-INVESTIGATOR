@@ -22,16 +22,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Target number of normal baseline transactions",
     )
     p.add_argument(
+        "--external-accounts",
+        type=int,
+        default=1_000,
+        help="Observed external counterparties (500-1500)",
+    )
+    p.add_argument(
         "--min-accounts",
         type=int,
         default=2500,
-        help="Minimum final account count (including demo accounts)",
+        help="Minimum final SHB-managed account count",
     )
     p.add_argument(
         "--max-accounts",
         type=int,
         default=3000,
-        help="Maximum final account count (including demo accounts)",
+        help="Maximum final SHB-managed account count",
     )
     p.add_argument(
         "--output",
@@ -69,6 +75,7 @@ def main(argv: list[str] | None = None) -> int:
         n_customers=args.customers,
         n_companies=args.companies,
         n_transactions=args.transactions,
+        n_external_accounts=args.external_accounts,
         min_accounts=args.min_accounts,
         max_accounts=args.max_accounts,
         output_dir=Path(args.output),
@@ -84,7 +91,8 @@ def main(argv: list[str] | None = None) -> int:
     world = generate_world(config, write=not args.no_write)
     print(
         f"Done. customers={len(world.customers)} companies={len(world.companies)} "
-        f"accounts={len(world.accounts)+len(world.demo_accounts)} "
+        f"shb_accounts={len(world.accounts)} "
+        f"external_accounts={len(world.external_accounts)} "
         f"transactions={len(world.transactions)} scenarios={len(world.scenarios)}"
     )
     if not args.no_write:

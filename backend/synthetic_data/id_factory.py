@@ -26,7 +26,10 @@ class IDFactory:
         return self.next("COMP", 6)
 
     def account(self) -> str:
-        return self.next("ACCT", 6)
+        return self.next("ACCT-SHB", 6)
+
+    def external_account(self) -> str:
+        return self.next("EXT-ACC", 6)
 
     def transaction(self) -> str:
         return self.next("TXN", 8)
