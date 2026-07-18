@@ -10,7 +10,7 @@ separately by ``ground_truth.py`` from scenario metadata returned here.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from synthetic_data.entity_generator import generate_account
@@ -57,10 +57,6 @@ class ScenarioSpec:
 
 def _pick(rng, seq):
     return seq[rng.randrange(len(seq))]
-
-
-def _entity_start_customer(c: Customer) -> datetime:
-    return c.created_at
 
 
 def _entity_start_company(c: Company) -> datetime:

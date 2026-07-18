@@ -6,7 +6,6 @@ import hashlib
 import json
 from collections import Counter
 from datetime import timedelta
-from pathlib import Path
 
 import pytest
 

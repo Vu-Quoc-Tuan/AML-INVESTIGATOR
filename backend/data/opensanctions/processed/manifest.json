@@ -1,0 +1,49 @@
+{
+  "generated_at": "2026-07-18T09:35:59.484132+00:00",
+  "country_filter": "vn",
+  "outputs": {
+    "vietnam_persons.csv": {
+      "rows": 1701,
+      "real_pep_rows": 1601,
+      "injected_customer_rows": 100,
+      "source": "https://data.opensanctions.org/artifacts/peps/20260717152701-kci/targets.simple.csv"
+    }
+  },
+  "normalization": {
+    "version": "v1",
+    "unicode_form": "NFKD",
+    "special_character_map": {
+      "Đ": "D",
+      "đ": "d",
+      "Ð": "D",
+      "ð": "d"
+    },
+    "capitalization": "name_component_title_case",
+    "normalized_columns": [
+      "name",
+      "aliases"
+    ],
+    "quality": {
+      "rows": 1701,
+      "canonical_names_with_non_ascii": 15,
+      "empty_normalized_names": 0
+    }
+  },
+  "customer_injection": {
+    "environment_variable": "PEP_CUSTOMER_INJECTION_PERCENT",
+    "percent": 5.0,
+    "customers_file": "backend/data/generated/customers.csv",
+    "eligible_customer_rows": 2000,
+    "injected_rows": 100,
+    "selection": "sha256(customer_id), exact rounded count",
+    "source_name": "SYNTHETIC_CUSTOMER_INJECTION"
+  },
+  "sources": {
+    "peps": {
+      "index_url": "https://data.opensanctions.org/artifacts/peps/20260717152701-kci/index.json",
+      "version": "20260717152701-kci",
+      "url": "https://data.opensanctions.org/artifacts/peps/20260717152701-kci/targets.simple.csv",
+      "sha1": "69c2d73d2c3d9a3b16413c3b0f5d0ccd5f829af7"
+    }
+  }
+}

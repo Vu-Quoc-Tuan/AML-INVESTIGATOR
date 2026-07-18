@@ -697,6 +697,12 @@ class DataRepository:
     def account_by_id(self, account_id: str) -> pd.Series | None:
         return self._series_by_id("accounts", "account_id", account_id)
 
+    def accounts_for_entity(self, entity_id: str) -> pd.DataFrame:
+        return self._rows_equal("accounts", "owner_entity_id", entity_id)
+
+    def address_by_id(self, address_id: str) -> pd.Series | None:
+        return self._series_by_id("addresses", "address_id", address_id)
+
     def external_account_by_id(self, external_account_id: str) -> pd.Series | None:
         return self._series_by_id("external_accounts", "external_account_id", external_account_id)
 
@@ -706,6 +712,35 @@ class DataRepository:
 
     def kyc_profile_by_entity(self, entity_id: str) -> pd.Series | None:
         return self._series_by_id("kyc_profiles", "entity_id", entity_id)
+
+    def kyc_document_by_id(self, document_id: str) -> pd.Series | None:
+        return self._series_by_id("kyc_documents", "document_id", document_id)
+
+    def entities_by_strong_identifier(
+        self, identifier_type: str, identifier_value: str
+    ) -> pd.DataFrame:
+        self._ensure_loaded()
+        kind = identifier_type.upper()
+        normalized = "".join(char for char in str(identifier_value).upper() if char.isalnum())
+        if kind == "NATIONAL_ID":
+            frame = self._frames["customers"]
+            mask = frame["national_id"].astype(str).map(
+                lambda value: "".join(char for char in value.upper() if char.isalnum())
+            ) == normalized
+            result = frame.loc[mask].copy(deep=True)
+            result["entity_id"] = result["customer_id"]
+            result["entity_type"] = "CUSTOMER"
+        elif kind == "REGISTRATION_NUMBER":
+            frame = self._frames["companies"]
+            mask = frame["registration_number"].astype(str).map(
+                lambda value: "".join(char for char in value.upper() if char.isalnum())
+            ) == normalized
+            result = frame.loc[mask].copy(deep=True)
+            result["entity_id"] = result["company_id"]
+            result["entity_type"] = "COMPANY"
+        else:
+            raise ValueError(f"unsupported strong identifier type: {identifier_type}")
+        return self._defensive_frame(result)
 
     def _series_by_id(self, table: str, column: str, value: str) -> pd.Series | None:
         self._ensure_loaded()
@@ -851,3 +886,48 @@ class DataRepository:
         graph.graph["ownership_cycle_detected"] = bool(cycles)
         graph.graph["ownership_cycles"] = cycles
         return graph
+
+    def build_ownership_neighborhood(
+        self,
+        company_id: str,
+        as_of_date: str | date | datetime,
+        max_depth: int,
+    ) -> nx.DiGraph:
+        """Return a bounded company-to-owner view of active ownership."""
+
+        if max_depth < 1:
+            raise ValueError("max_depth must be at least 1")
+        self._ensure_loaded()
+        companies = set(self._frames["companies"]["company_id"].astype(str))
+        if company_id not in companies:
+            return nx.DiGraph(
+                root_company_id=company_id,
+                as_of_date=str(as_of_date),
+                max_depth=max_depth,
+                entity_not_found=True,
+            )
+        active = self.build_active_ownership_graph(as_of_date)
+        result = nx.DiGraph(
+            root_company_id=company_id,
+            as_of_date=active.graph["as_of_date"],
+            max_depth=max_depth,
+        )
+        queue: list[tuple[str, int, tuple[str, ...]]] = [(company_id, 0, (company_id,))]
+        detected_cycles: list[list[str]] = []
+        while queue:
+            owned_company, depth, path = queue.pop(0)
+            result.add_node(owned_company, **deepcopy(dict(active.nodes[owned_company])))
+            if depth >= max_depth:
+                continue
+            for owner in active.predecessors(owned_company):
+                attrs = deepcopy(dict(active.edges[owner, owned_company]))
+                result.add_node(owner, **deepcopy(dict(active.nodes[owner])))
+                result.add_edge(owned_company, owner, **attrs)
+                if owner in path:
+                    detected_cycles.append([*path[path.index(owner):], owner])
+                    continue
+                if active.nodes[owner].get("entity_type") == "COMPANY":
+                    queue.append((str(owner), depth + 1, (*path, str(owner))))
+        result.graph["ownership_cycle_detected"] = bool(detected_cycles)
+        result.graph["ownership_cycles"] = detected_cycles
+        return result

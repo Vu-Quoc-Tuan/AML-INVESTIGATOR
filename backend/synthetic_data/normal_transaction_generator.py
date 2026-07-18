@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Optional
 
 from synthetic_data.models import (
@@ -36,16 +36,6 @@ def _weighted_channel(rng, channels: tuple) -> Channel:
             return item if isinstance(item, Channel) else Channel(item)
     item = items[-1]
     return item if isinstance(item, Channel) else Channel(item)
-
-
-def _sample_hour(rng, weights: tuple[float, ...]) -> int:
-    threshold = rng.random() * sum(weights)
-    cumulative = 0.0
-    for hour, weight in enumerate(weights):
-        cumulative += weight
-        if threshold <= cumulative:
-            return hour
-    return 12
 
 
 def _sample_amount(rng, spec: ProfileSpec) -> int:
