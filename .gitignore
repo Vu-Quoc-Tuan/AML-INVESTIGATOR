@@ -4,3 +4,11 @@ backend/.env
 **/.pytest_cache/
 backend/data/generated_smoke/
 backend/data/opensanctions/raw/
+# Python environments and generated artifacts
+backend/.venv/
+__pycache__/
+.pytest_cache/
+.env
+plan/
+backend/tests
+backend/pytest.ini
