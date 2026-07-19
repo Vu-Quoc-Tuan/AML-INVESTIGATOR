@@ -45,6 +45,7 @@ class InvestigationRun(BaseModel):
     trigger: RunTrigger
     status: RunStatus
     soft_prompt_snapshot: str | None = None
+    agent_settings_snapshot: dict | None = None
     completed_count: int = Field(default=0, ge=0)
     failed_count: int = Field(default=0, ge=0)
     created_at: datetime
@@ -60,6 +61,10 @@ class QueueCounts(BaseModel):
     processing: int = Field(default=0, ge=0)
     completed: int = Field(default=0, ge=0)
     failed: int = Field(default=0, ge=0)
+    # Analyst dispositions after multi-agent (not queue FAILED / FALSE auto-clear)
+    approved: int = Field(default=0, ge=0)
+    rejected: int = Field(default=0, ge=0)
+    false_positive: int = Field(default=0, ge=0)
 
 
 class ControlSummary(BaseModel):

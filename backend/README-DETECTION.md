@@ -46,8 +46,16 @@ ignore khỏi Git.
 - `blocked_transactions`: ML confidence `>= 0.99`, giả lập trạng thái response
   đã gửi upstream (`DELIVERED`), không bao giờ được runner lấy.
 - `investigation_candidates`: snapshot event, kết quả ML/rule, trạng thái
-  `PENDING/PROCESSING/COMPLETED/FAILED`, lease, số lần thử và `case_id`.
+  `PENDING/PROCESSING/COMPLETED/FAILED`, lease, số lần thử, `case_id` và
+  `result_json` (tóm tắt ngắn sau khi multi-agent xong).
 - `detection_settings`: mode `AUTO` hoặc `MANUAL` hiện hành.
+
+Ticket API (đọc queue):
+
+```bash
+curl -s localhost:8000/api/v1/tickets | jq
+curl -s localhost:8000/api/v1/tickets/<candidate_id> | jq
+```
 
 Kiểm tra nhanh:
 
@@ -55,7 +63,7 @@ Kiểm tra nhanh:
 sqlite3 data/detection_queue.db \
   "select event_id,response_status,created_at from blocked_transactions;"
 sqlite3 data/detection_queue.db \
-  "select event_id,status,attempts,case_id,last_error from investigation_candidates;"
+  "select event_id,status,attempts,case_id,last_error,result_json from investigation_candidates;"
 ```
 
 ## Chạy multi-agent từ queue

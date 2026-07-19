@@ -91,14 +91,14 @@ def _coordinator(
     *,
     behavior: str = "complete",
     workflow_error: Exception | None = None,
-    captured_prompts: list[str | None] | None = None,
+    captured_settings: list | None = None,
 ) -> tuple[InvestigationControlRepository, InvestigationRunCoordinator]:
     control = _control(tmp_path)
     candidates = CandidateRepository()
 
-    def workflow_factory(soft_prompt: str | None) -> str:
-        if captured_prompts is not None:
-            captured_prompts.append(soft_prompt)
+    def workflow_factory(agent_settings) -> str:
+        if captured_settings is not None:
+            captured_settings.append(agent_settings)
         if workflow_error:
             raise workflow_error
         return "workflow"
@@ -114,18 +114,77 @@ def _coordinator(
     )
 
 
-def test_coordinator_completes_and_uses_prompt_snapshot(tmp_path: Path) -> None:
-    captured: list[str | None] = []
-    control, coordinator = _coordinator(tmp_path, captured_prompts=captured)
-    control.set_soft_prompt("first", now=NOW)
+def test_coordinator_completes_and_uses_agent_settings_snapshot(tmp_path: Path) -> None:
+    from app.investigation_orchestrator.agent_config import (
+        AgentSetting,
+        AgentSettingsBundle,
+    )
+
+    captured: list = []
+    control, coordinator = _coordinator(tmp_path, captured_settings=captured)
+    control.set_agent_settings(
+        AgentSettingsBundle(
+            agents=[
+                AgentSetting(id="planner", soft_prompt="first"),
+                AgentSetting(id="transaction"),
+                AgentSetting(id="kyc"),
+                AgentSetting(id="screening"),
+                AgentSetting(id="behavior_mapper"),
+                AgentSetting(id="report"),
+            ]
+        )
+    )
     run = control.create_run(RunTrigger.MANUAL, now=NOW)
-    control.set_soft_prompt("second", now=NOW)
+    control.set_agent_settings(
+        AgentSettingsBundle(
+            agents=[
+                AgentSetting(id="planner", soft_prompt="second"),
+                AgentSetting(id="transaction"),
+                AgentSetting(id="kyc"),
+                AgentSetting(id="screening"),
+                AgentSetting(id="behavior_mapper"),
+                AgentSetting(id="report"),
+            ]
+        )
+    )
 
     result = coordinator.execute(run.run_id)
 
     assert result.status is RunStatus.COMPLETED
     assert result.completed_count == 1
-    assert captured == ["first"]
+    assert len(captured) == 1
+    assert captured[0].for_agent("planner").soft_prompt == "first"
+
+
+def test_coordinator_passes_global_prompt_snapshot_to_supported_factory(
+    tmp_path: Path,
+) -> None:
+    control = _control(tmp_path)
+    candidates = CandidateRepository()
+    captured: list[str | None] = []
+
+    def workflow_factory(agent_settings, *, soft_prompt=None) -> str:
+        del agent_settings
+        captured.append(soft_prompt)
+        return "workflow"
+
+    def runner_factory(repository: Any, factory: Any) -> FakeRunner:
+        return FakeRunner(repository, factory, "complete")
+
+    coordinator = InvestigationRunCoordinator(
+        control,
+        candidates,
+        workflow_factory=workflow_factory,
+        runner_factory=runner_factory,
+    )
+    control.set_soft_prompt("global snapshot", now=NOW)
+    run = control.create_run(RunTrigger.MANUAL, now=NOW)
+    control.set_soft_prompt("new value", now=NOW)
+
+    result = coordinator.execute(run.run_id)
+
+    assert result.status is RunStatus.COMPLETED
+    assert captured == ["global snapshot"]
 
 
 def test_coordinator_marks_completed_with_errors(tmp_path: Path) -> None:
@@ -154,7 +213,7 @@ def test_workflow_construction_failure_is_redacted(tmp_path: Path) -> None:
 
 def test_unknown_run_fails_before_workflow_creation(tmp_path: Path) -> None:
     captured: list[str | None] = []
-    _, coordinator = _coordinator(tmp_path, captured_prompts=captured)
+    _, coordinator = _coordinator(tmp_path, captured_settings=captured)
 
     with pytest.raises(KeyError, match="run not found"):
         coordinator.execute("missing")

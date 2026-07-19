@@ -217,6 +217,27 @@ class DetectionRepository:
                 (mode.value,),
             )
 
+    def count_claimable(self, *, now: datetime | None = None) -> int:
+        """How many candidates a runner could claim right now (queue not empty)."""
+
+        claimed_at = now or datetime.now(UTC)
+        if claimed_at.tzinfo is None:
+            raise ValueError("claim time must be timezone-aware")
+        now_text = _iso(claimed_at)
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS count FROM investigation_candidates
+                WHERE attempts < ? AND (
+                    status = 'PENDING' OR
+                    (status = 'FAILED' AND (lease_until IS NULL OR lease_until <= ?)) OR
+                    (status = 'PROCESSING' AND lease_until <= ?)
+                )
+                """,
+                (self.max_attempts, now_text, now_text),
+            ).fetchone()
+        return int(row["count"] if row is not None else 0)
+
     def claim_next(
         self, trigger: RunTrigger, *, now: datetime | None = None
     ) -> CandidateRecord | None:

@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 from app.detection.contracts import RunMode, RunTrigger
+from app.investigation_orchestrator.agent_config import AgentSettingsBundle
 
 from .contracts import (
     ControlConfiguration,
@@ -71,6 +73,7 @@ class InvestigationControlRepository:
                         'COMPLETED_WITH_ERRORS','FAILED','INTERRUPTED'
                     )),
                     soft_prompt_snapshot TEXT,
+                    agent_settings_snapshot TEXT,
                     completed_count INTEGER NOT NULL DEFAULT 0,
                     failed_count INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
@@ -95,6 +98,80 @@ class InvestigationControlRepository:
                 """,
                 (now,),
             )
+            connection.execute(
+                "INSERT OR IGNORE INTO detection_settings(key,value) VALUES('selected_llm_id','')"
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO detection_settings(key,value) VALUES('agent_settings','{}')"
+            )
+            self._ensure_column(
+                connection,
+                "investigation_runs",
+                "agent_settings_snapshot",
+                "TEXT",
+            )
+
+    @staticmethod
+    def _ensure_column(
+        connection: sqlite3.Connection, table: str, column: str, decl: str
+    ) -> None:
+        existing = {
+            row["name"]
+            for row in connection.execute(f"PRAGMA table_info({table})")
+        }
+        if column not in existing:
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+    def get_agent_settings(self) -> AgentSettingsBundle:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT value FROM detection_settings WHERE key='agent_settings'"
+            ).fetchone()
+        raw: dict[str, Any] = {}
+        if row and row["value"]:
+            try:
+                parsed = json.loads(row["value"])
+                if isinstance(parsed, dict):
+                    raw = parsed
+            except json.JSONDecodeError:
+                raw = {}
+        return AgentSettingsBundle.from_storage(raw)
+
+    def set_agent_settings(self, bundle: AgentSettingsBundle) -> AgentSettingsBundle:
+        payload = json.dumps(bundle.to_storage_dict(), separators=(",", ":"), sort_keys=True)
+        with self._transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO detection_settings(key,value) VALUES('agent_settings',?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                """,
+                (payload,),
+            )
+        return bundle
+
+    def get_selected_llm_id(self) -> str | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT value FROM detection_settings WHERE key='selected_llm_id'"
+            ).fetchone()
+        if row is None:
+            return None
+        value = (row["value"] or "").strip()
+        return value or None
+
+    def set_selected_llm_id(self, profile_id: str) -> str:
+        cleaned = (profile_id or "").strip()
+        if not cleaned:
+            raise ValueError("profile_id must not be empty")
+        with self._transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO detection_settings(key,value) VALUES('selected_llm_id',?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                """,
+                (cleaned,),
+            )
+        return cleaned
 
     def get_configuration(self) -> ControlConfiguration:
         with self._connect() as connection:
@@ -138,6 +215,7 @@ class InvestigationControlRepository:
                 ).fetchone()["value"]
             )
             counts = {status: 0 for status in ("PENDING", "PROCESSING", "COMPLETED", "FAILED")}
+            review_counts = {"APPROVED": 0, "REJECTED": 0, "FALSE": 0}
             table_exists = connection.execute(
                 """
                 SELECT 1 FROM sqlite_master
@@ -150,6 +228,25 @@ class InvestigationControlRepository:
                 ):
                     if row["status"] in counts:
                         counts[row["status"]] = int(row["count"])
+                # review_decision may be missing on older DBs before migration
+                columns = {
+                    row["name"]
+                    for row in connection.execute(
+                        "PRAGMA table_info(investigation_candidates)"
+                    )
+                }
+                if "review_decision" in columns:
+                    for row in connection.execute(
+                        """
+                        SELECT review_decision, COUNT(*) AS count
+                        FROM investigation_candidates
+                        WHERE review_decision IS NOT NULL AND review_decision != ''
+                        GROUP BY review_decision
+                        """
+                    ):
+                        key = row["review_decision"]
+                        if key in review_counts:
+                            review_counts[key] = int(row["count"])
             active = self._active_row(connection)
         return ControlSummary(
             mode=mode,
@@ -158,6 +255,9 @@ class InvestigationControlRepository:
                 processing=counts["PROCESSING"],
                 completed=counts["COMPLETED"],
                 failed=counts["FAILED"],
+                approved=review_counts["APPROVED"],
+                rejected=review_counts["REJECTED"],
+                false_positive=review_counts["FALSE"],
             ),
             active_run=self._run_from_row(active) if active else None,
         )
@@ -191,19 +291,26 @@ class InvestigationControlRepository:
             soft_prompt = connection.execute(
                 "SELECT value FROM detection_settings WHERE key='soft_prompt'"
             ).fetchone()["value"]
+            agent_settings_row = connection.execute(
+                "SELECT value FROM detection_settings WHERE key='agent_settings'"
+            ).fetchone()
+            agent_settings_raw = (
+                agent_settings_row["value"] if agent_settings_row else "{}"
+            )
             run_id = str(uuid.uuid4())
             connection.execute(
                 """
                 INSERT INTO investigation_runs(
-                    run_id,trigger,status,soft_prompt_snapshot,
+                    run_id,trigger,status,soft_prompt_snapshot,agent_settings_snapshot,
                     completed_count,failed_count,created_at
-                ) VALUES(?,?,?, ?,0,0,?)
+                ) VALUES(?,?,?,?,?,0,0,?)
                 """,
                 (
                     run_id,
                     trigger.value,
                     RunStatus.PENDING.value,
                     soft_prompt or None,
+                    agent_settings_raw or "{}",
                     _iso(created_at),
                 ),
             )
@@ -361,11 +468,21 @@ class InvestigationControlRepository:
 
     @staticmethod
     def _run_from_row(row: sqlite3.Row) -> InvestigationRun:
+        keys = set(row.keys())
+        agent_snapshot = None
+        if "agent_settings_snapshot" in keys and row["agent_settings_snapshot"]:
+            try:
+                parsed = json.loads(row["agent_settings_snapshot"])
+                if isinstance(parsed, dict):
+                    agent_snapshot = parsed
+            except json.JSONDecodeError:
+                agent_snapshot = None
         return InvestigationRun(
             run_id=row["run_id"],
             trigger=RunTrigger(row["trigger"]),
             status=RunStatus(row["status"]),
             soft_prompt_snapshot=row["soft_prompt_snapshot"],
+            agent_settings_snapshot=agent_snapshot,
             completed_count=row["completed_count"],
             failed_count=row["failed_count"],
             created_at=_datetime(row["created_at"]),
