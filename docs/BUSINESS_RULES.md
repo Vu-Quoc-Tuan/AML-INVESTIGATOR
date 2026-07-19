@@ -14,13 +14,16 @@
 - Công ty trong scenario chính **bắt buộc** phải có UBO đã verified.
 - Không được xóa `UBO_DECLARATION` document trong scenario chính.
 
-## 3. Quy tắc về Human-in-the-Loop
+## 3. Quy tắc về Human final authority
 
 - Hệ thống **không được tự động**:
   - Phong tỏa tài khoản
   - Gửi SAR/STR
   - Ra quyết định compliance cuối cùng
-- Mọi case đều phải qua bước Human Review trước khi kết thúc.
+- Draft report / ticket result chỉ là **hỗ trợ điều tra**. Quyết định cuối thuộc
+  chuyên viên AML (review ngoài workflow kỹ thuật).
+- Runtime LangGraph **không** bắt buộc interrupt Human Review trước khi kết thúc
+  graph; product rule ở trên vẫn giữ.
 
 ## 4. Quy tắc về Agent Authority
 
