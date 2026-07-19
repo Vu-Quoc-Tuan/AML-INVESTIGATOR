@@ -12,6 +12,8 @@ from app.investigation_orchestrator.prompts import (
     TRANSACTION_AGENT_PROMPT,
 )
 from app.investigation_orchestrator.soft_prompt import append_soft_prompt
+from app.investigation_orchestrator.agent_config import AgentSetting, AgentSettingsBundle
+from app.investigation_orchestrator.workflow import _prompt_for_agent
 
 
 def test_empty_soft_prompt_preserves_base_prompt_byte_for_byte() -> None:
@@ -75,3 +77,19 @@ def test_all_six_agent_builders_preserve_base_prompts_without_soft_prompt(
         BEHAVIOR_MAPPER_PROMPT,
         REPORT_AGENT_PROMPT,
     ]
+
+
+def test_per_agent_prompt_overrides_global_prompt_and_empty_uses_fallback() -> None:
+    settings = AgentSettingsBundle(
+        agents=[
+            AgentSetting(id="planner", soft_prompt="planner only"),
+            AgentSetting(id="transaction"),
+        ]
+    )
+
+    assert _prompt_for_agent(
+        "planner", agent_settings=settings, soft_prompt="global"
+    ) == "planner only"
+    assert _prompt_for_agent(
+        "transaction", agent_settings=settings, soft_prompt="global"
+    ) == "global"

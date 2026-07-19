@@ -22,6 +22,53 @@ def recorder(tmp_path: Path) -> ExecutionEventRecorder:
     )
 
 
+def test_record_tool_messages_from_worker_tool_list(tmp_path: Path) -> None:
+    """Message-based logging used when LangChain callbacks miss create_agent tools."""
+
+    from app.investigation_orchestrator.agents import record_tool_messages
+    from app.investigation_orchestrator.tool_registry import ToolResult
+
+    event_recorder = recorder(tmp_path)
+    success = ToolMessage(
+        content=ToolResult(
+            status="SUCCESS",
+            evidence=[
+                {
+                    "evidence_id": "E-1",
+                    "source_system": "LEDGER",
+                    "source_record_id": "TX-1",
+                }
+            ],
+        ).model_dump_json(),
+        tool_call_id="c1",
+        name="trace_funds",
+    )
+    no_data = ToolMessage(
+        content=ToolResult(status="NO_DATA", warnings=["empty"]).model_dump_json(),
+        tool_call_id="c2",
+        name="screen_entity",
+    )
+    record_tool_messages(
+        event_recorder,
+        "transaction_agent",
+        [success, no_data],
+        {"trace_funds", "screen_entity"},
+    )
+    events = event_recorder.repository.list_after("ticket-1")
+    types = [event.event_type for event in events]
+    assert types == [
+        InvestigationEventType.TOOL_STARTED,
+        InvestigationEventType.TOOL_SUCCEEDED,
+        InvestigationEventType.TOOL_STARTED,
+        InvestigationEventType.TOOL_SUCCEEDED,
+    ]
+    assert events[1].tool_name == "trace_funds"
+    assert events[1].payload is not None
+    assert events[1].payload.get("evidence_count") == 1
+    assert events[3].tool_name == "screen_entity"
+    assert events[3].status == "NO_DATA"
+
+
 def test_tool_callback_records_start_and_safe_artifact(tmp_path: Path) -> None:
     event_recorder = recorder(tmp_path)
     callback = ToolEventCallback(event_recorder, "transaction_agent")

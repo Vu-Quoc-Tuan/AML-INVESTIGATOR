@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 from langgraph.types import Command
+from langchain_core.runnables import RunnableConfig
 
 from .agents import invoke_report
 from .prompts import report_context
@@ -25,6 +26,7 @@ def make_report_node(agent: Any) -> Callable[[InvestigationState], Command]:
 
     def report_agent_node(
         state: InvestigationState,
+        config: RunnableConfig,
     ) -> Command[Literal["supervisor"]]:
         workflow_error = _pipeline_error(state)
         report = invoke_report(
@@ -34,6 +36,7 @@ def make_report_node(agent: Any) -> Callable[[InvestigationState], Command]:
             case_file=state.get("case_file", {}),
             validation=state.get("evidence_validation", {}),
             workflow_error=workflow_error,
+            config=config,
         )
         return Command(
             update={

@@ -1,5 +1,7 @@
 """Focused checks for the Hybrid Supervisor workflow with legal enrichment."""
 
+from pathlib import Path
+
 import pytest
 from langgraph.types import Command
 
@@ -15,6 +17,11 @@ from app.investigation_orchestrator.workflow import build_workflow
 from app.investigation_orchestrator.tool_registry import (
     ToolConfigurationError,
     ToolRegistry,
+)
+from app.investigation_events import (
+    InvestigationEventRepository,
+    InvestigationEventType,
+    ToolExecutionFailed,
 )
 from app.legal_rag.hybrid_retriever import StaticLegalRetriever
 from tests.node_fixtures import deterministic_agent_nodes, report_node
@@ -201,6 +208,35 @@ def test_failed_parallel_agent_still_completes_with_report() -> None:
     assert result["report"]["workflow_error"] == "Mandatory agents failed: transaction"
 
 
+def test_instrumented_tool_failure_stops_before_report(tmp_path: Path) -> None:
+    nodes = deterministic_agent_nodes()
+
+    def failed_transaction(_state, _config=None):
+        raise ToolExecutionFailed("trace_funds", "RuntimeError")
+
+    nodes["transaction_agent"] = failed_transaction
+    events = InvestigationEventRepository(tmp_path / "events.db")
+    graph = build_workflow(
+        agent_nodes=nodes,
+        legal_retriever=StaticLegalRetriever(),
+        event_repository=events,
+    )
+
+    with pytest.raises(ToolExecutionFailed, match="trace_funds"):
+        graph.invoke(
+            initial_state("CASE-EVENT-FAILED", {"candidate_id": "ticket-1"}),
+            _config("failed-tool-event"),
+        )
+
+    recorded = events.list_after("ticket-1")
+    assert any(
+        event.agent_id == "transaction_agent"
+        and event.event_type is InvestigationEventType.AGENT_FAILED
+        for event in recorded
+    )
+    assert not any(event.agent_id == "report_agent" for event in recorded)
+
+
 def test_planner_fallback_error_is_visible_to_the_report() -> None:
     state = {
         **initial_state("CASE-PLANNER-FALLBACK", {}),
@@ -295,7 +331,7 @@ def test_llm_workflow_rejects_an_incomplete_injected_registry() -> None:
 def test_default_llm_path_composes_agent_tool_owners(monkeypatch) -> None:
     captured = {}
 
-    def capture_nodes(_model, registry):
+    def capture_nodes(registry, **_kwargs):
         captured["tool_names"] = {
             owner: {tool.name for tool in registry.tools_for(owner)}
             for owner in ("transaction", "kyc", "screening")

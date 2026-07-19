@@ -9,7 +9,14 @@ from typing import Any
 from langchain.agents import create_agent
 from langchain.agents.structured_output import ToolStrategy
 from langchain_core.messages import ToolMessage
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
+
+from app.investigation_events import (
+    ExecutionEventRecorder,
+    InvestigationEventType,
+    ToolExecutionFailed,
+)
 
 from .agent_schemas import (
     MANDATORY_STAGES,
@@ -33,6 +40,103 @@ from .prompts import (
 from .state import AgentOutput, InvestigationState
 from .soft_prompt import append_soft_prompt
 from .tool_registry import AgentName, ToolResult
+
+
+def _child_config(config: RunnableConfig | None) -> RunnableConfig:
+    child: RunnableConfig = dict(config or {})
+    child["recursion_limit"] = 8
+    return child
+
+
+def _event_recorder_from_config(
+    config: RunnableConfig | None,
+) -> tuple[ExecutionEventRecorder | None, str | None]:
+    """Pull the instrumented workflow recorder (if any) off LangGraph config."""
+
+    configurable = (config or {}).get("configurable") or {}
+    if not isinstance(configurable, dict):
+        return None, None
+    recorder = configurable.get("aml_event_recorder")
+    agent_id = configurable.get("aml_agent_id")
+    if not isinstance(recorder, ExecutionEventRecorder):
+        return None, None
+    return recorder, str(agent_id) if agent_id else None
+
+
+def record_tool_messages(
+    recorder: ExecutionEventRecorder | None,
+    agent_id: str,
+    messages: Sequence[Any],
+    tool_names: set[str],
+) -> None:
+    """Persist TOOL_* events from ToolMessages (reliable with create_agent).
+
+    LangChain callbacks often do not fire for create_agent tool runs; reading the
+    final message list matches how evidence is admitted in collect_tool_results.
+    """
+
+    if recorder is None:
+        return
+    for message in messages:
+        if not isinstance(message, ToolMessage) or message.name not in tool_names:
+            continue
+        name = str(message.name)
+        recorder.append(
+            InvestigationEventType.TOOL_STARTED,
+            agent_id=agent_id,
+            tool_name=name,
+            status="RUNNING",
+            summary=f"Tool {name} started",
+            payload={"tool_call_id": getattr(message, "tool_call_id", None)},
+        )
+        if getattr(message, "status", None) == "error":
+            recorder.append(
+                InvestigationEventType.TOOL_FAILED,
+                agent_id=agent_id,
+                tool_name=name,
+                status="FAILED",
+                summary=f"Tool {name} failed",
+                payload={"error_type": "ToolMessageError"},
+            )
+            continue
+        try:
+            result = ToolResult.model_validate(_decode_tool_message(message))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            recorder.append(
+                InvestigationEventType.TOOL_FAILED,
+                agent_id=agent_id,
+                tool_name=name,
+                status="FAILED",
+                summary=f"Tool {name} failed",
+                payload={"error_type": "InvalidToolResult"},
+            )
+            continue
+        if result.status == "ERROR":
+            recorder.append(
+                InvestigationEventType.TOOL_FAILED,
+                agent_id=agent_id,
+                tool_name=name,
+                status="FAILED",
+                summary=f"Tool {name} failed",
+                payload={
+                    "error_code": result.error_code,
+                    "warnings": list(result.warnings)[:8],
+                },
+            )
+            continue
+        recorder.append(
+            InvestigationEventType.TOOL_SUCCEEDED,
+            agent_id=agent_id,
+            tool_name=name,
+            status=result.status,
+            summary=f"Tool {name} completed",
+            payload={
+                "status": result.status,
+                "error_code": result.error_code,
+                "evidence_count": len(result.evidence),
+                "warnings": list(result.warnings)[:8],
+            },
+        )
 
 
 def build_planner_agent(model: Any, *, soft_prompt: str | None = None) -> Any:
@@ -228,6 +332,7 @@ def invoke_behavior_mapper(
     agent: Any | None,
     context: str,
     state: InvestigationState,
+    config: RunnableConfig | None = None,
 ) -> tuple[dict[str, Any], str | None]:
     """Return behavior-framed RAG queries grounded in scout findings only."""
 
@@ -238,7 +343,7 @@ def invoke_behavior_mapper(
     try:
         result = agent.invoke(
             {"messages": [{"role": "user", "content": context}]},
-            config={"recursion_limit": 8},
+            config=_child_config(config),
         )
         mapping = _structured_response(result, BehaviorMappingResponse)
         return _sanitize_behavior_mapping(mapping.model_dump(), state), None
@@ -252,13 +357,15 @@ def _structured_response(result: dict[str, Any], schema: type[Any]) -> Any:
     return schema.model_validate(result.get("structured_response"))
 
 
-def invoke_planner(agent: Any, context: str) -> tuple[dict[str, Any], str | None]:
+def invoke_planner(
+    agent: Any, context: str, config: RunnableConfig | None = None
+) -> tuple[dict[str, Any], str | None]:
     """Return a valid plan; preserve a redacted error code on provider failure."""
 
     try:
         result = agent.invoke(
             {"messages": [{"role": "user", "content": context}]},
-            config={"recursion_limit": 8},
+            config=_child_config(config),
         )
         plan = _structured_response(result, InvestigationPlanResponse)
         return plan.model_dump(), None
@@ -388,6 +495,7 @@ def invoke_worker(
     agent: Any | None,
     tools: Sequence[BaseTool],
     context: str,
+    config: RunnableConfig | None = None,
 ) -> AgentOutput:
     """Invoke a worker and admit evidence only through registered tool messages."""
 
@@ -400,15 +508,23 @@ def invoke_worker(
             "evidence": [],
             "metadata": {"warnings": ["No registered tools available"]},
         }
+    child_config = _child_config(config)
+    allowed_tools = {tool.name for tool in tools}
     try:
         result = agent.invoke(
             {"messages": [{"role": "user", "content": context}]},
-            config={"recursion_limit": 8},
+            config=child_config,
         )
         schema = ScreeningAnalysisResponse if owner == "screening" else WorkerAnalysisResponse
         analysis = _structured_response(result, schema)
-        tool_results, warnings = collect_tool_results(
-            result.get("messages", []), {tool.name for tool in tools}
+        messages = result.get("messages", [])
+        tool_results, warnings = collect_tool_results(messages, allowed_tools)
+        recorder, configured_agent_id = _event_recorder_from_config(child_config)
+        record_tool_messages(
+            recorder,
+            configured_agent_id or f"{owner}_agent",
+            messages,
+            allowed_tools,
         )
         output = _assemble_worker_output(owner, analysis, tool_results, warnings)
         if owner == "screening":
@@ -418,6 +534,8 @@ def invoke_worker(
                 tool_results,
             )
         return output
+    except ToolExecutionFailed:
+        raise
     except Exception as exc:
         return {
             "agent": f"{owner}_agent",
@@ -581,6 +699,7 @@ def invoke_report(
     case_file: dict[str, Any],
     validation: dict[str, Any],
     workflow_error: str | None,
+    config: RunnableConfig | None = None,
 ) -> dict[str, Any]:
     """Return a safe automated risk dossier even if the provider call fails."""
 
@@ -589,7 +708,7 @@ def invoke_report(
     try:
         result = agent.invoke(
             {"messages": [{"role": "user", "content": context}]},
-            config={"recursion_limit": 8},
+            config=_child_config(config),
         )
         report = _structured_response(result, InvestigationReportResponse)
         if report.case_id != case_id:

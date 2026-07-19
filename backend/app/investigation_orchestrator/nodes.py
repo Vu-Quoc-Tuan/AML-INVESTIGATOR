@@ -6,6 +6,7 @@ from collections.abc import Callable, Sequence
 from typing import Any, Literal
 
 from langchain_core.tools import BaseTool
+from langchain_core.runnables import RunnableConfig
 
 from langgraph.graph import END
 from langgraph.types import Command
@@ -142,8 +143,10 @@ def supervisor_node(
 def make_planner_node(agent: Any) -> Callable[[InvestigationState], Command]:
     """Adapt the structured planner agent to the shared workflow state."""
 
-    def planner_node(state: InvestigationState) -> Command[Literal["supervisor"]]:
-        plan, error_type = invoke_planner(agent, planner_context(state))
+    def planner_node(
+        state: InvestigationState, config: RunnableConfig
+    ) -> Command[Literal["supervisor"]]:
+        plan, error_type = invoke_planner(agent, planner_context(state), config)
         update: dict[str, Any] = {
             "investigation_plan": plan,
             "handoff_log": [
@@ -170,8 +173,10 @@ def make_worker_node(
 ) -> Callable[[InvestigationState], dict[str, object]]:
     """Adapt one parallel LLM worker without allowing direct state mutation."""
 
-    def worker_node(state: InvestigationState) -> dict[str, object]:
-        output = invoke_worker(owner, agent, tools, worker_context(state))
+    def worker_node(
+        state: InvestigationState, config: RunnableConfig
+    ) -> dict[str, object]:
+        output = invoke_worker(owner, agent, tools, worker_context(state), config)
         return {"agent_outputs": {owner: output}}
 
     return worker_node
@@ -278,8 +283,11 @@ def make_screening_node(
 
     def screening_agent_node(
         state: InvestigationState,
+        config: RunnableConfig,
     ) -> Command[Literal["supervisor"]]:
-        output = invoke_worker("screening", agent, tools, screening_context(state))
+        output = invoke_worker(
+            "screening", agent, tools, screening_context(state), config
+        )
         update: dict[str, Any] = {
             "agent_outputs": {"screening": output},
             "handoff_log": [
@@ -301,9 +309,10 @@ def make_behavior_mapper_node(
 
     def behavior_mapper_node(
         state: InvestigationState,
+        config: RunnableConfig,
     ) -> Command[Literal["supervisor"]]:
         mapping, error_type = invoke_behavior_mapper(
-            agent, behavior_mapper_context(state), state
+            agent, behavior_mapper_context(state), state, config
         )
         update: dict[str, Any] = {
             "behavior_mapping": mapping,
