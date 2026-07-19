@@ -1,5 +1,10 @@
 # AML Investigator - Architecture
+
 **Mục tiêu:** Xây dựng hệ thống Multi-Agent hỗ trợ điều tra AML cho ngân hàng SHB, sử dụng synthetic data SHB-centric.
+
+**Cập nhật:** 19/07/2026 — phản ánh pipeline Kafka + detection queue + workflow không interrupt HITL.  
+Chi tiết vận hành: `backend/README-KAFKA.md`, `backend/README-DETECTION.md`.  
+Feature history: `docs/superpowers/`.
 
 ---
 
@@ -9,7 +14,7 @@
 
 ### Nguyên tắc cốt lõi
 - **Evidence-first**: Mọi finding phải có evidence và nguồn rõ ràng.
-- **Human-in-the-Loop**: Quyết định cuối cùng luôn thuộc về chuyên viên AML.
+- **Human final authority**: Quyết định compliance cuối cùng thuộc chuyên viên AML (không auto block / SAR / final decision). Runtime graph **không** pause Human Review interrupt; draft report xong là kết thúc workflow kỹ thuật.
 - **SHB-centric visibility**: Hệ thống chỉ sử dụng dữ liệu SHB có thể quan sát được. Không suy diễn dữ liệu của ngân hàng khác.
 - **Explainability**: Mọi kết luận đều có thể truy vết nguồn và mức độ tin cậy.
 
@@ -19,40 +24,38 @@
 
 ```mermaid
 graph TD
-    A[Transaction Monitoring] --> B[Detection Engine]
-    B --> C[AML Alert]
-    C --> D[Case Orchestrator]
-    
-    D --> E[Transaction & Network Investigator]
-    D --> F[KYC & Entity Intelligence]
-    E & F --> G[Merge & Validate]
-    
-    G --> H[Screening, Typology & Compliance]
-    H --> I[Evidence Validator]
-    
-    I --> J[Investigation Report Agent]
-    J --> K[Human-in-the-Loop Review]
-    
-    subgraph "Data Layer"
-        L[DataRepository<br/>Pandas + NetworkX]
+    A[Kafka raw transactions] --> B[Validate / DLQ]
+    B --> C[Kafka validated]
+    C --> D[Realtime detection rules parallel ML]
+    D -->|QUEUED| E[SQLite investigation_candidates]
+    D -->|BLOCKED| F[SQLite blocked_transactions]
+    D -->|ALLOWED| G[No durable row]
+    E --> H[Investigation runner / control]
+    H --> I[LangGraph multi-agent]
+    I --> J[Ticket result summary]
+    J --> K[Analyst review outside graph]
+
+    subgraph DataLayer [Data Layer]
+        L[DataRepository Pandas + NetworkX]
     end
-    
-    E --> L
-    F --> L
-    H --> L
+
+    I --> L
 ```
 
 ### Các thành phần chính
 
 | Thành phần | Owner | Mô tả | Loại |
 |-----------|-------|-------|------|
-| **Detection Engine** | Người 1 | Phát hiện alert từ giao dịch | Rule + ML (không LLM) |
-| **Case Orchestrator** | Người 5 | Quản lý vòng đời case, điều phối agent | LangGraph |
-| **Transaction & Network Investigator** | Người 2 | Truy vết dòng tiền, phát hiện pattern | Tools + Agent |
-| **KYC & Entity Intelligence** | Người 3 | Phân tích KYC, ownership, UBO | Tools + Agent |
-| **Screening, Typology & Compliance** | Người 4 | Screening, typology matching, RAG | Tools + Agent |
-| **Investigation Report Agent** | Người 5 | Tổng hợp hồ sơ điều tra | Agent |
-| **Human AML Reviewer** | Con người | Phê duyệt / yêu cầu bổ sung | HITL |
+| **Kafka ingestion** | Streaming | Raw → validated / DLQ | Consumer + mock producer |
+| **Detection Engine** | Detection | Rule ∥ ML → ALLOWED / QUEUED / BLOCKED | Rule + XGBoost (không LLM) |
+| **Investigation queue** | Detection | SQLite candidates, AUTO/MANUAL mode | Operational store |
+| **Case Orchestrator** | Orchestrator | Điều phối multi-agent | LangGraph |
+| **Transaction & Network** | TX domain | Truy vết dòng tiền, pattern | Tools + Agent |
+| **KYC & Entity** | KYC domain | KYC, ownership, UBO | Tools + Agent |
+| **Screening / Legal** | Compliance | Screening, typology, legal RAG | Tools + Agent / node |
+| **Report Agent** | Orchestrator | Draft dossier | Agent |
+| **Tickets API** | API | List/get candidate + short result | FastAPI |
+| **Analyst** | Con người | Quyết định cuối (ngoài graph) | Product HITL |
 
 ---
 
@@ -133,29 +136,28 @@ or a deterministic post-merge analysis node is available.
 - `retrieve_internal_policy`
 - `validate_citations`
 
-### 4.3. Workflow Orchestration (Người 5)
+### 4.3. Workflow Orchestration
 
-Người 5 chịu trách nhiệm:
-- Xây dựng `Shared Case File` state
-- Đăng ký tool vào LangGraph
-- Xây dựng graph với parallel execution + conditional routing
-- Xử lý `interrupt` cho Human Review
-- Validate output của agent trước khi merge
+Orchestrator chịu trách nhiệm:
+- `InvestigationState` / case file trong graph
+- Đăng ký tool vào LangGraph (tool registry + allowlist)
+- Parallel Transaction/KYC fork-join, screening, legal enrichment, evidence validation, report
+- **Không** còn node interrupt Human Review trong runtime hiện tại
+- Validate contribution evidence trước khi merge vào case file
 
 ---
 
 ## 5. Quy trình xử lý Case (End-to-End Workflow)
 
-1. **Detection** → Tạo Alert
-2. **Orchestrator** → Tạo Case + Investigation Plan
-3. **Song song**:
-   - Transaction & Network Agent
-   - KYC & Entity Agent
-4. **Merge & Validate**
-5. **Screening + Typology Agent**
-6. **Evidence Validation** (Deterministic)
-7. **Report Agent** → Draft dossier
-8. **Human Review** → Quyết định cuối cùng
+1. **Ingest** — Kafka raw → validated (hoặc DLQ)
+2. **Detection** — rules ∥ ML → ALLOWED / QUEUED / BLOCKED
+3. **Queue** — candidate `PENDING` (hoặc blocked row)
+4. **Runner** — claim candidate → `initial_state(case_id, alert)` → multi-agent
+5. **Song song (trong graph)**: Transaction & KYC
+6. **Merge & Validate** → Screening → Legal (nếu có) → Evidence validation
+7. **Report Agent** → draft dossier trong state
+8. **Persist tóm tắt** — `case_id` + `result_json` trên candidate (ticket)
+9. **Analyst review** — ngoài graph (UI/ticket); không phải LangGraph interrupt
 
 ---
 
