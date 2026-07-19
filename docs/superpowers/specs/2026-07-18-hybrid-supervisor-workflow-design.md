@@ -1,3 +1,5 @@
+> **HISTORICAL / design snapshot.** Parts of this document predate runtime changes (e.g. Human Review interrupt removal, Kafka/detection queue). Prefer `docs/architecture.md` and `backend/README-*.md` for current behavior.
+
 # Hybrid Supervisor Workflow Design
 
 ## 1. Scope
