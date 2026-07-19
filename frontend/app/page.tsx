@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import type { ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -10,32 +9,24 @@ import {
   Tooltip,
   XAxis,
   YAxis,
-  Line,
-  LineChart,
 } from "recharts";
 import {
-  Bot,
   BrainCircuit,
   CheckCircle2,
-  ChevronDown,
   Clock3,
   Download,
   FileText,
-  Filter,
-  Gauge,
   History,
   LayoutDashboard,
   Loader2,
   Network,
   RefreshCw,
-  Save,
   Search,
   Settings2,
   ShieldCheck,
   ShieldAlert,
-  Sparkles,
+  Workflow,
   XCircle,
-  Zap,
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -44,10 +35,51 @@ import {
   Position,
   ReactFlow,
 } from "@xyflow/react";
+import { AgentSettingsPanel } from "@/components/agent-settings-panel";
+import { FinalOutputWithCitations } from "@/components/final-output-with-citations";
+import { InvestigationControlPanel } from "@/components/investigation-control-panel";
+import { useInvestigationEvents } from "@/hooks/use-investigation-events";
+import {
+  useInvestigationControl,
+  type InvestigationControlState,
+} from "@/hooks/use-investigation-control";
+import { ApiError } from "@/lib/api";
+import { InvestigationControlApiError } from "@/lib/investigation-control";
+import type {
+  AgentRuntimeStatus,
+  InvestigationEvent,
+} from "@/lib/investigation-events";
+import {
+  LLM_AGENTS,
+  WORKFLOW_EDGES,
+  WORKFLOW_NODES,
+  type WorkflowNodeDefinition,
+  type WorkflowNodeIcon,
+} from "@/lib/workflow-catalog";
+import { getFlowTrends, type FlowTrendPoint } from "@/lib/metrics";
+import {
+  getTicket,
+  listTickets,
+  reviewTicket,
+  runTicket,
+  type ReviewDecision,
+  type TicketDetail,
+  type TicketStatus,
+  type TicketSummary,
+} from "@/lib/tickets";
+// getTicket used on WorkflowPage for APPROVE/REJECT footer
 
-type PageKey = "dashboard" | "history" | "workflow" | "monitoring" | "config";
-type Status = "Pending" | "Checking" | "Reject" | "Safety" | "Approve";
-type AgentState = "Idle" | "Thinking" | "Working" | "Completed";
+type PageKey = "dashboard" | "history" | "workflow" | "config";
+/** History list badge labels (not the same as raw queue status). */
+type Status =
+  | "Pending"
+  | "Running"
+  | "Review"
+  | "Approved"
+  | "Rejected"
+  | "False"
+  | "Failed"
+  | "Done";
 
 const navItems: { key: PageKey; label: string; icon: typeof LayoutDashboard }[] = [
   { key: "dashboard", label: "Trang chủ", icon: LayoutDashboard },
@@ -56,149 +88,50 @@ const navItems: { key: PageKey; label: string; icon: typeof LayoutDashboard }[] 
   { key: "config", label: "Cấu hình Agent", icon: Settings2 },
 ];
 
-const stats = [
-  {
-    title: "Pending",
-    value: 128,
-    description: "Investigations awaiting triage",
-    color: "yellow",
-    icon: Clock3,
-  },
-  {
-    title: "Checking",
-    value: 64,
-    description: "AI agents actively reviewing",
-    color: "blue",
-    icon: Loader2,
-  },
-  {
-    title: "Reject",
-    value: 21,
-    description: "Cases rejected after review",
-    color: "red",
-    icon: XCircle,
-  },
-  {
-    title: "Approve",
-    value: 312,
-    description: "Cases approved and archived",
-    color: "green",
-    icon: CheckCircle2,
-  },
-];
+function ticketMessage(ticket: TicketSummary): string {
+  // Decision is shown as a compact pill in Actions — do not repeat long review text.
+  if (ticket.review_decision) return "—";
+  if (ticket.message && ticket.message.trim()) {
+    const msg = ticket.message.trim();
+    if (/analyst\s+(approved|rejected)|review:\s*/i.test(msg)) return "—";
+    return msg;
+  }
+  if (ticket.overall_risk_level) {
+    return `Risk: ${ticket.overall_risk_level} · ML ${ticket.ml_confidence.toFixed(2)}`;
+  }
+  if (ticket.status === "PENDING") return "Waiting for multi-agent — press Run";
+  if (ticket.status === "PROCESSING") return "Multi-agent running";
+  if (ticket.status === "FAILED") return "Investigation failed";
+  return "Investigation finished";
+}
 
-const flowData = [
-  { day: "Mon", volume: 12800, flagged: 420 },
-  { day: "Tue", volume: 15200, flagged: 610 },
-  { day: "Wed", volume: 14150, flagged: 520 },
-  { day: "Thu", volume: 17800, flagged: 740 },
-  { day: "Fri", volume: 16900, flagged: 690 },
-  { day: "Sat", volume: 19400, flagged: 910 },
-  { day: "Sun", volume: 21300, flagged: 860 },
-];
-
-const investigationSeeds = [
-  { status: "Pending", account: "US-4830-****-9921", message: "Đang chờ Planner Agent rà soát" },
-  { status: "Checking", account: "SG-1190-****-0384", message: "Đang truy vết giao dịch phân lớp" },
-  { status: "Safety", account: "GB-7201-****-5509", message: "Đã giải phóng nhờ khớp KYC" },
-  { status: "Reject", account: "VN-8812-****-4402", message: "Chuyển xử lý thủ công" },
-  { status: "Checking", account: "DE-4408-****-7102", message: "Đang phát hiện mẫu gom tiền" },
-  { status: "Pending", account: "US-5510-****-2208", message: "Đang chờ chấm điểm rủi ro" },
-] satisfies ReadonlyArray<{ status: Status; account: string; message: string }>;
-
-const investigations = Array.from({ length: 48 }, (_, index) => {
-  const seed = investigationSeeds[index % investigationSeeds.length];
-
-  return {
-    ...seed,
-    id: `AML-2408-${1182 + index}`,
-  };
-});
-
-const agents = [
-  {
-    name: "Planner Agent",
-    status: "Thinking" as AgentState,
-    health: "99.8%",
-    latency: "112 ms",
-    tasks: 1248,
-    action: "Prioritizing suspicious clusters",
-    utilization: 62,
-    icon: BrainCircuit,
-    data: [{ v: 14 }, { v: 18 }, { v: 16 }, { v: 24 }, { v: 23 }, { v: 30 }, { v: 28 }],
-  },
-  {
-    name: "Transaction Agent",
-    status: "Working" as AgentState,
-    health: "98.6%",
-    latency: "184 ms",
-    tasks: 984,
-    action: "Tracing fund flow across accounts",
-    utilization: 78,
-    icon: Network,
-    data: [{ v: 20 }, { v: 22 }, { v: 18 }, { v: 27 }, { v: 31 }, { v: 29 }, { v: 35 }],
-  },
-  {
-    name: "Report Agent",
-    status: "Idle" as AgentState,
-    health: "100%",
-    latency: "88 ms",
-    tasks: 602,
-    action: "Waiting for case evidence",
-    utilization: 34,
-    icon: FileText,
-    data: [{ v: 8 }, { v: 11 }, { v: 9 }, { v: 14 }, { v: 12 }, { v: 16 }, { v: 15 }],
-  },
-  {
-    name: "KYC Agent",
-    status: "Completed" as AgentState,
-    health: "99.1%",
-    latency: "136 ms",
-    tasks: 1096,
-    action: "Validated beneficial ownership graph",
-    utilization: 55,
-    icon: ShieldCheck,
-    data: [{ v: 12 }, { v: 15 }, { v: 18 }, { v: 16 }, { v: 21 }, { v: 20 }, { v: 24 }],
-  },
-];
-
-const activityFeed = {
-  "Planner Agent": [
-    ["09:42", "Fetching transaction history..."],
-    ["09:43", "Prioritizing entity risk clusters..."],
-    ["09:44", "Routing high-velocity accounts..."],
-  ],
-  "Transaction Agent": [
-    ["09:41", "Tracing fund flow..."],
-    ["09:43", "Detecting fan-in..."],
-    ["09:45", "Calculating graph metrics..."],
-  ],
-  "Report Agent": [
-    ["09:38", "Generating report outline..."],
-    ["09:40", "Attaching evidence summary..."],
-    ["09:46", "Waiting for planner approval..."],
-  ],
-  "KYC Agent": [
-    ["09:37", "Matching beneficial owners..."],
-    ["09:39", "Screening sanctions aliases..."],
-    ["09:44", "Completing identity confidence score..."],
-  ],
-};
-
-const modelLevels = [
-  { title: "Light", description: "Fast checks for low-risk queues.", icon: Zap },
-  { title: "Medium", description: "Balanced reasoning for daily review.", icon: Gauge },
-  { title: "Strong", description: "Deep multi-hop analysis for escalation.", icon: Sparkles },
-];
-
-const models = ["AML-Core-v2.1", "Graph-Net-Alpha", "Velocity-Engine-X", "Reasoning-Pro"];
+function errorMessage(error: unknown): string {
+  if (error instanceof ApiError) return error.message;
+  if (error instanceof InvestigationControlApiError) return error.message;
+  if (error instanceof Error) return error.message;
+  return "Unexpected error";
+}
 
 const statusStyles: Record<Status, string> = {
   Pending: "bg-amber-50 text-amber-700 ring-amber-200",
-  Checking: "bg-blue-50 text-blue-700 ring-blue-200",
-  Reject: "bg-red-50 text-red-700 ring-red-200",
-  Safety: "bg-emerald-50 text-emerald-700 ring-emerald-200",
-  Approve: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+  Running: "bg-blue-50 text-blue-700 ring-blue-200",
+  Review: "bg-violet-50 text-violet-700 ring-violet-200",
+  Approved: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+  Rejected: "bg-red-50 text-red-700 ring-red-200",
+  False: "bg-slate-100 text-slate-700 ring-slate-300",
+  Failed: "bg-orange-50 text-orange-800 ring-orange-200",
+  Done: "bg-slate-50 text-slate-600 ring-slate-200",
+};
+
+const statusLabels: Record<Status, string> = {
+  Pending: "Pending",
+  Running: "Running",
+  Review: "Review",
+  Approved: "APPROVED",
+  Rejected: "REJECTED",
+  False: "FALSE",
+  Failed: "Failed",
+  Done: "Done",
 };
 
 function useCount(target: number) {
@@ -229,7 +162,15 @@ function cn(...classes: Array<string | false | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-function StatCard({ item }: { item: (typeof stats)[number] }) {
+type StatItem = {
+  title: "Pending" | "Checking" | "Reject" | "Approve";
+  value: number;
+  description: string;
+  color: "yellow" | "blue" | "red" | "green";
+  icon: typeof Clock3;
+};
+
+function StatCard({ item }: { item: StatItem }) {
   const count = useCount(item.value);
   const Icon = item.icon;
   const palette = {
@@ -273,153 +214,428 @@ function PageHeader({ title, subtitle }: { title: string; subtitle?: string }) {
   );
 }
 
-function DashboardPage() {
+function DashboardPage({
+  control,
+  onGoHistory,
+}: {
+  control: InvestigationControlState;
+  onGoHistory?: () => void;
+}) {
+  const queue = control.summary?.queue;
+  const stats: StatItem[] = [
+    {
+      title: "Pending",
+      value: queue?.pending ?? 0,
+      description: "Chờ multi-agent (PENDING trong queue)",
+      color: "yellow",
+      icon: Clock3,
+    },
+    {
+      title: "Checking",
+      value: queue?.processing ?? 0,
+      description: "Đang chạy multi-agent (PROCESSING)",
+      color: "blue",
+      icon: Loader2,
+    },
+    {
+      title: "Reject",
+      value: queue?.rejected ?? 0,
+      description: "Analyst bấm REJECT sau khi agent nghi rửa tiền",
+      color: "red",
+      icon: XCircle,
+    },
+    {
+      title: "Approve",
+      value: queue?.approved ?? 0,
+      description: "Analyst bấm APPROVE sau khi agent nghi rửa tiền",
+      color: "green",
+      icon: CheckCircle2,
+    },
+  ];
+
+  const [trendDays, setTrendDays] = useState(7);
+  const [trendPoints, setTrendPoints] = useState<FlowTrendPoint[]>([]);
+  const [trendLoading, setTrendLoading] = useState(true);
+  const [trendError, setTrendError] = useState<string | null>(null);
+
+  const loadTrends = useCallback(async (days: number) => {
+    setTrendLoading(true);
+    setTrendError(null);
+    try {
+      const response = await getFlowTrends(days);
+      setTrendPoints(response.items);
+    } catch (err) {
+      setTrendError(errorMessage(err));
+      setTrendPoints([]);
+    } finally {
+      setTrendLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadTrends(trendDays);
+  }, [loadTrends, trendDays]);
+
+  // Refresh chart when investigation control summary reloads (e.g. after a run).
+  useEffect(() => {
+    if (control.summary) {
+      void loadTrends(trendDays);
+    }
+  }, [control.summary?.queue?.pending, control.summary?.queue?.completed, control.summary?.queue?.failed, loadTrends, trendDays]);
+
+  const chartData = useMemo(
+    () =>
+      trendPoints.map((point) => ({
+        ...point,
+        label: `${point.day} ${point.date.slice(5)}`,
+      })),
+    [trendPoints],
+  );
+
   return (
     <div className="space-y-8">
-      <PageHeader title="AML-Investigator" />
+      <PageHeader
+        title="AML-Investigator"
+        subtitle="Queue realtime và các batch multi-agent được đồng bộ từ backend."
+      />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {stats.map((item) => (
           <StatCard key={item.title} item={item} />
         ))}
       </div>
+      <InvestigationControlPanel control={control} onGoHistory={onGoHistory} />
       <section className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold text-slate-950">Transaction Flow Trends</h2>
-            <p className="mt-1 text-sm text-slate-600">Volume and flagged transaction patterns across the current week.</p>
+            <h2 className="text-lg font-semibold text-slate-950">Detection flow trends</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              Số outcome detection lưu DB theo ngày (queued + blocked). ALLOWED không lưu nên không có trên chart.
+            </p>
           </div>
-          <div className="flex items-center gap-4 text-sm text-slate-600">
-            <span className="flex items-center gap-2"><span className="size-2 rounded-full bg-blue-600" />Transaction Volume</span>
-            <span className="flex items-center gap-2"><span className="size-2 rounded-full bg-red-500" />Flagged Transactions</span>
+          <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
+            <span className="flex items-center gap-2">
+              <span className="size-2 rounded-full bg-blue-600" />
+              Durable outcomes (queued+blocked)
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="size-2 rounded-full bg-red-500" />
+              Queued for investigation
+            </span>
+            <select
+              value={trendDays}
+              onChange={(event) => setTrendDays(Number(event.target.value))}
+              className="rounded-xl bg-slate-50 px-3 py-2 text-sm ring-1 ring-slate-200 outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value={7}>7 days</option>
+              <option value={14}>14 days</option>
+              <option value={30}>30 days</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => void loadTrends(trendDays)}
+              className="inline-flex h-9 items-center gap-2 rounded-xl bg-white px-3 text-sm font-medium text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
+            >
+              <RefreshCw className={cn("size-4", trendLoading && "animate-spin")} />
+              Refresh
+            </button>
           </div>
         </div>
+        {trendError && (
+          <p className="mb-4 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">
+            {trendError}
+          </p>
+        )}
         <div className="h-[360px] w-full">
-          <ResponsiveContainer>
-            <AreaChart data={flowData} margin={{ left: 0, right: 12, top: 12, bottom: 0 }}>
-              <defs>
-                <linearGradient id="volume" x1="0" x2="0" y1="0" y2="1">
-                  <stop offset="5%" stopColor="#2563EB" stopOpacity={0.28} />
-                  <stop offset="95%" stopColor="#2563EB" stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="flagged" x1="0" x2="0" y1="0" y2="1">
-                  <stop offset="5%" stopColor="#EF4444" stopOpacity={0.22} />
-                  <stop offset="95%" stopColor="#EF4444" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid stroke="#E2E8F0" vertical={false} />
-              <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: "#64748B", fontSize: 12 }} />
-              <YAxis axisLine={false} tickLine={false} tick={{ fill: "#64748B", fontSize: 12 }} />
-              <Tooltip
-                contentStyle={{ borderRadius: 12, borderColor: "#E2E8F0", boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)" }}
-                formatter={(value) => (typeof value === "number" ? value.toLocaleString() : value)}
-              />
-              <Area type="monotone" dataKey="volume" stroke="#2563EB" strokeWidth={3} fill="url(#volume)" name="Transaction Volume" />
-              <Area type="monotone" dataKey="flagged" stroke="#EF4444" strokeWidth={3} fill="url(#flagged)" name="Flagged Transactions" />
-            </AreaChart>
-          </ResponsiveContainer>
+          {trendLoading && chartData.length === 0 ? (
+            <div className="grid h-full place-items-center text-sm text-slate-500">Loading trends…</div>
+          ) : (
+            <ResponsiveContainer>
+              <AreaChart data={chartData} margin={{ left: 0, right: 12, top: 12, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="volume" x1="0" x2="0" y1="0" y2="1">
+                    <stop offset="5%" stopColor="#2563EB" stopOpacity={0.28} />
+                    <stop offset="95%" stopColor="#2563EB" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="flagged" x1="0" x2="0" y1="0" y2="1">
+                    <stop offset="5%" stopColor="#EF4444" stopOpacity={0.22} />
+                    <stop offset="95%" stopColor="#EF4444" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="#E2E8F0" vertical={false} />
+                <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: "#64748B", fontSize: 12 }} />
+                <YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{ fill: "#64748B", fontSize: 12 }} />
+                <Tooltip
+                  contentStyle={{ borderRadius: 12, borderColor: "#E2E8F0", boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)" }}
+                  formatter={(value) => (typeof value === "number" ? value.toLocaleString() : value)}
+                  labelFormatter={(_, payload) => {
+                    const point = payload?.[0]?.payload as FlowTrendPoint | undefined;
+                    return point?.date ?? "";
+                  }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="volume"
+                  stroke="#2563EB"
+                  strokeWidth={3}
+                  fill="url(#volume)"
+                  name="Durable outcomes"
+                />
+                <Area
+                  type="monotone"
+                  dataKey="flagged"
+                  stroke="#EF4444"
+                  strokeWidth={3}
+                  fill="url(#flagged)"
+                  name="Queued candidates"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
         </div>
       </section>
     </div>
   );
 }
 
-function HistoryPage() {
-  const [selected, setSelected] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
-  const pageSize = 6;
-  const totalPages = Math.ceil(investigations.length / pageSize);
-  const startIndex = (page - 1) * pageSize;
-  const visibleInvestigations = investigations.slice(startIndex, startIndex + pageSize);
+function displayTicketStatus(ticket: TicketSummary): Status {
+  const raw = (ticket.display_status || "").toUpperCase();
+  if (raw === "APPROVED" || ticket.review_decision === "APPROVED") return "Approved";
+  if (raw === "REJECTED" || ticket.review_decision === "REJECTED") return "Rejected";
+  if (raw === "FALSE" || ticket.review_decision === "FALSE") return "False";
+  if (raw === "AWAITING_REVIEW" || ticket.can_review) return "Review";
+  if (raw === "RUNNING" || ticket.status === "PROCESSING") return "Running";
+  if (raw === "FAILED" || ticket.status === "FAILED") return "Failed";
+  if (raw === "PENDING" || ticket.status === "PENDING") return "Pending";
+  if (ticket.status === "COMPLETED") return "Done";
+  return "Pending";
+}
 
-  const goToPage = (nextPage: number) => {
-    setPage(Math.min(Math.max(nextPage, 1), totalPages));
-    setSelected(null);
+function HistoryPage({
+  onGoWorkflow,
+}: {
+  onGoWorkflow?: (ticketId: string) => void;
+}) {
+  const pageSize = 6;
+  const [page, setPage] = useState(1);
+  const [items, setItems] = useState<TicketSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
+
+  const loadPage = useCallback(async (nextPage: number) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const offset = (nextPage - 1) * pageSize;
+      const response = await listTickets({ limit: pageSize, offset });
+      setItems(response.items);
+      setHasMore(response.count === pageSize);
+      setPage(nextPage);
+    } catch (err) {
+      setError(errorMessage(err));
+      setItems([]);
+      setHasMore(false);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadPage(1);
+  }, [loadPage]);
+
+  /** Open agent flow for any ticket (pending/running/done) — SSE replays history. */
+  const openTicketFlow = (ticketId: string) => {
+    onGoWorkflow?.(ticketId);
   };
+
+  const onRunTicket = async (ticketId: string) => {
+    setActionBusy(ticketId);
+    setError(null);
+    try {
+      await runTicket(ticketId);
+      onGoWorkflow?.(ticketId);
+      await loadPage(page);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  const onReview = async (ticketId: string, decision: ReviewDecision) => {
+    setActionBusy(ticketId);
+    setError(null);
+    try {
+      const updated = await reviewTicket(ticketId, decision);
+      setItems((current) =>
+        current.map((item) => (item.ticket_id === ticketId ? { ...item, ...updated } : item)),
+      );
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  const startIndex = items.length === 0 ? 0 : (page - 1) * pageSize + 1;
+  const endIndex = (page - 1) * pageSize + items.length;
+  const anyProcessing = items.some((item) => item.status === "PROCESSING");
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
-        <PageHeader title="Lịch sử đáng ngờ" />
+        <PageHeader
+          title="Lịch sử đáng ngờ"
+          subtitle="Click ID để mở Luồng Agent (SSE + log). PENDING: nút Run (một ticket một lúc). APPROVE/REJECT hiện dưới luồng khi xong và nghi rửa tiền."
+        />
         <div className="flex flex-wrap gap-2">
-          <div className="flex h-10 min-w-56 items-center gap-2 rounded-xl bg-white px-3 text-sm text-slate-600 ring-1 ring-slate-200">
-            <Search className="size-4" />
-            <input className="w-full bg-transparent outline-none placeholder:text-slate-500" placeholder="Search investigations" />
-          </div>
-          <button className="inline-flex h-10 items-center gap-2 rounded-xl bg-white px-4 text-sm font-medium text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50">
-            <Filter className="size-4" /> Filter
-          </button>
-          <button className="inline-flex h-10 items-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-medium text-white transition hover:bg-blue-700">
-            <Download className="size-4" /> Export
+          <button
+            type="button"
+            onClick={() => void loadPage(page)}
+            className="inline-flex h-10 items-center gap-2 rounded-xl bg-white px-4 text-sm font-medium text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50"
+          >
+            <RefreshCw className={cn("size-4", loading && "animate-spin")} /> Refresh
           </button>
         </div>
       </div>
 
+      {error && (
+        <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-200">{error}</p>
+      )}
+
       <section className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200/70">
-        <div className="hidden grid-cols-[1.2fr_1fr_1.4fr_1.6fr] px-4 py-3 text-xs font-semibold text-slate-500 md:grid">
+        <div className="hidden grid-cols-[1.1fr_0.9fr_1.2fr_1.3fr_1.1fr] px-4 py-3 text-xs font-semibold text-slate-500 md:grid">
           <span>ID</span>
           <span>Status</span>
-          <span>Account Number</span>
+          <span>Transaction</span>
           <span>Message</span>
+          <span>Actions</span>
         </div>
         <div className="space-y-2">
-          {visibleInvestigations.map((row) => (
-            <button
-              key={row.id}
-              onClick={() => setSelected(row.id)}
-              className={cn(
-                "grid w-full gap-3 rounded-xl bg-slate-50 p-4 text-left transition hover:bg-blue-50/70 hover:shadow-sm md:grid-cols-[1.2fr_1fr_1.4fr_1.6fr] md:items-center",
-                selected === row.id && "bg-blue-50 ring-1 ring-blue-200"
-              )}
-            >
-              <span className="font-medium text-slate-950">{row.id}</span>
-              <span>
-                <span className={cn("inline-flex rounded-full px-2.5 py-1 text-xs font-medium ring-1", statusStyles[row.status])}>
-                  {row.status}
+          {loading && items.length === 0 && (
+            <p className="px-4 py-8 text-center text-sm text-slate-500">Loading tickets…</p>
+          )}
+          {!loading && items.length === 0 && (
+            <div className="space-y-2 px-4 py-8 text-center text-sm text-slate-600">
+              <p className="font-medium text-slate-800">Chưa có ticket trong queue</p>
+              <p>
+                Dashboard có thể vẫn hiện batch MANUAL “Hoàn tất · 0 ticket” — đó chỉ là
+                lần bấm chạy khi queue rỗng, không tạo dòng History.
+              </p>
+              <p className="text-slate-500">
+                Cần detection ghi candidate (Kafka validated → worker) rồi Refresh.
+              </p>
+            </div>
+          )}
+          {items.map((row) => {
+            const uiStatus = displayTicketStatus(row);
+            const label = row.case_id || row.ticket_id;
+            const busy = actionBusy === row.ticket_id;
+            return (
+              <div
+                key={row.ticket_id}
+                className="grid w-full gap-3 rounded-xl bg-slate-50 p-4 md:grid-cols-[1.1fr_0.9fr_1.2fr_1.3fr_1.1fr] md:items-center"
+              >
+                <button
+                  type="button"
+                  onClick={() => openTicketFlow(row.ticket_id)}
+                  className="truncate text-left font-medium text-slate-950 hover:text-blue-700"
+                  title="Open agent flow for this ticket"
+                >
+                  {label}
+                </button>
+                <span className="flex justify-center md:justify-start">
+                  <span className={cn("inline-flex rounded-full px-2.5 py-1 text-xs font-medium ring-1", statusStyles[uiStatus])}>
+                    {statusLabels[uiStatus]}
+                  </span>
                 </span>
-              </span>
-              <span className="text-sm text-slate-700">{row.account}</span>
-              <span className="text-sm text-slate-600">{row.message}</span>
-            </button>
-          ))}
+                <span className="truncate text-sm text-slate-700">{row.transaction_id || row.event_id}</span>
+                <span className="line-clamp-2 text-sm text-slate-600" title={ticketMessage(row)}>
+                  {ticketMessage(row)}
+                </span>
+                <div className="flex min-h-8 flex-wrap items-center justify-center gap-2">
+                  {row.status === "PENDING" && row.can_run && (
+                    <button
+                      type="button"
+                      disabled={busy || anyProcessing || actionBusy !== null}
+                      title={
+                        anyProcessing
+                          ? "Another ticket is RUNNING — wait before the next Run"
+                          : "Run multi-agent for this PENDING ticket"
+                      }
+                      onClick={() => void onRunTicket(row.ticket_id)}
+                      className="inline-flex h-8 items-center rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {busy ? "…" : "Run"}
+                    </button>
+                  )}
+                  {row.can_review && (
+                    <>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void onReview(row.ticket_id, "APPROVED")}
+                        className="inline-flex h-8 items-center rounded-lg bg-emerald-600 px-3 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                      >
+                        APPROVE
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void onReview(row.ticket_id, "REJECTED")}
+                        className="inline-flex h-8 items-center rounded-lg bg-red-600 px-3 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                      >
+                        REJECT
+                      </button>
+                    </>
+                  )}
+                  {!row.can_review && row.review_decision === "APPROVED" && (
+                    <span className="inline-flex h-8 items-center rounded-lg bg-emerald-600 px-3 text-xs font-semibold text-white">
+                      APPROVED
+                    </span>
+                  )}
+                  {!row.can_review && row.review_decision === "REJECTED" && (
+                    <span className="inline-flex h-8 items-center rounded-lg bg-red-600 px-3 text-xs font-semibold text-white">
+                      REJECTED
+                    </span>
+                  )}
+                  {!row.can_review && row.review_decision === "FALSE" && (
+                    <span className="inline-flex h-8 items-center rounded-lg bg-slate-600 px-3 text-xs font-semibold text-white">
+                      FALSE
+                    </span>
+                  )}
+                  {!row.can_run && !row.can_review && !row.review_decision && row.status === "PROCESSING" && (
+                    <span className="text-xs text-blue-700">…</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </section>
 
-      {selected && (
-        <motion.aside
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-blue-200"
-        >
-          <div className="flex items-start gap-3">
-            <ShieldAlert className="mt-1 size-5 text-blue-600" />
-            <div>
-              <h2 className="font-semibold text-slate-950">Investigation details opened</h2>
-              <p className="mt-1 text-sm leading-6 text-slate-600">
-                {selected} is ready for analyst review with transaction graph, KYC evidence, and agent rationale.
-              </p>
-            </div>
-          </div>
-        </motion.aside>
-      )}
-
       <div className="flex items-center justify-between text-sm text-slate-600">
         <span>
-          Showing {startIndex + 1}-{Math.min(startIndex + pageSize, investigations.length)} of {investigations.length} cases
+          {items.length === 0
+            ? "No cases on this page"
+            : `Showing ${startIndex}-${endIndex} (page ${page})`}
         </span>
         <div className="flex gap-2">
           <button
-            onClick={() => goToPage(page - 1)}
-            disabled={page === 1}
+            type="button"
+            onClick={() => void loadPage(page - 1)}
+            disabled={page === 1 || loading}
             className="rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400 disabled:hover:bg-white"
           >
             Previous
           </button>
-          <span className="rounded-xl bg-blue-600 px-3 py-2 font-medium text-white">
-            {page}
-          </span>
+          <span className="rounded-xl bg-blue-600 px-3 py-2 font-medium text-white">{page}</span>
           <button
-            onClick={() => goToPage(page + 1)}
-            disabled={page === totalPages}
+            type="button"
+            onClick={() => void loadPage(page + 1)}
+            disabled={!hasMore || loading}
             className="rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400 disabled:hover:bg-white"
           >
             Next
@@ -430,274 +646,422 @@ function HistoryPage() {
   );
 }
 
-function AgentNode({ data }: { data: { name: string; status: AgentState; icon: typeof Bot } }) {
-  const Icon = data.icon;
+const workflowIconMap: Record<WorkflowNodeIcon, typeof BrainCircuit> = {
+  planner: BrainCircuit,
+  transaction: Network,
+  kyc: ShieldCheck,
+  screening: ShieldAlert,
+  behavior: Workflow,
+  report: FileText,
+};
+
+type WorkflowNodeData = WorkflowNodeDefinition & {
+  runtimeStatus: AgentRuntimeStatus;
+  selected: boolean;
+};
+
+const runtimeStatusStyles: Record<AgentRuntimeStatus, string> = {
+  IDLE: "bg-slate-100 text-slate-600 ring-slate-200",
+  RUNNING: "bg-blue-50 text-blue-700 ring-blue-200",
+  COMPLETED: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+  FAILED: "bg-red-50 text-red-700 ring-red-200",
+};
+
+function WorkflowNode({ data }: { data: WorkflowNodeData }) {
+  const Icon = workflowIconMap[data.icon];
 
   return (
-    <div className="min-w-56 rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+    <div className={cn(
+      "w-64 rounded-xl bg-white p-4 shadow-sm ring-1",
+      data.selected ? "ring-2 ring-blue-500" : "ring-slate-200",
+    )}>
       <Handle type="target" position={Position.Top} className="opacity-0" />
       <div className="flex items-center gap-3">
-        <div className="grid size-10 place-items-center rounded-xl bg-blue-50 text-blue-700 ring-1 ring-blue-100">
+        <div className={cn(
+          "grid size-10 shrink-0 place-items-center rounded-xl ring-1",
+          "bg-blue-50 text-blue-700 ring-blue-100",
+        )}>
           <Icon className="size-5" />
         </div>
-        <div>
+        <div className="min-w-0">
+          <span className={cn(
+            "inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1",
+            runtimeStatusStyles[data.runtimeStatus],
+          )}>{data.runtimeStatus}</span>
           <p className="font-semibold text-slate-950">{data.name}</p>
-          <p className="text-sm text-slate-600">Status: {data.status}{data.status === "Thinking" || data.status === "Working" ? "..." : ""}</p>
+          <p className="truncate text-xs text-slate-500">{data.stage}</p>
         </div>
-      </div>
-      <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-slate-100">
-        <motion.div
-          className="h-full rounded-full bg-blue-600"
-          animate={{ x: ["-65%", "110%"] }}
-          transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
-          style={{ width: "60%" }}
-        />
       </div>
       <Handle type="source" position={Position.Bottom} className="opacity-0" />
     </div>
   );
 }
 
-function WorkflowPage() {
-  const [selected, setSelected] = useState("Planner Agent");
-  const nodeTypes = useMemo(() => ({ agent: AgentNode }), []);
+function eventLabel(event: InvestigationEvent): string {
+  if (event.event_type === "TOOL_STARTED") return "Gọi tool";
+  if (event.event_type === "TOOL_SUCCEEDED") return "Kết quả tool";
+  if (event.event_type === "TOOL_FAILED") return "Tool lỗi — investigation đã dừng";
+  if (event.event_type === "AGENT_STARTED") return "Agent bắt đầu";
+  if (event.event_type === "AGENT_COMPLETED") return "Output agent";
+  if (event.event_type === "AGENT_FAILED") return "Agent lỗi";
+  return event.event_type;
+}
+
+function EventCard({ event }: { event: InvestigationEvent }) {
+  return (
+    <article className={cn(
+      "rounded-xl border p-3",
+      event.event_type.includes("FAILED")
+        ? "border-red-200 bg-red-50"
+        : "border-slate-200 bg-slate-50",
+    )}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            {eventLabel(event)}
+          </p>
+          {event.tool_name && <p className="mt-1 font-mono text-xs text-blue-700">{event.tool_name}</p>}
+        </div>
+        <time className="shrink-0 text-[11px] text-slate-500">
+          {new Date(event.created_at).toLocaleTimeString("vi-VN")}
+        </time>
+      </div>
+      <p className="mt-2 text-sm leading-5 text-slate-700">{event.summary}</p>
+      {event.payload && (
+        <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-white p-2 text-[11px] leading-5 text-slate-600 ring-1 ring-slate-200">
+          {JSON.stringify(event.payload, null, 2)}
+        </pre>
+      )}
+    </article>
+  );
+}
+
+function WorkflowPage({ ticketId }: { ticketId: string | null }) {
+  const { state, connection, error } = useInvestigationEvents(ticketId);
+  const [ticket, setTicket] = useState<TicketDetail | null>(null);
+  const [ticketError, setTicketError] = useState<string | null>(null);
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [manualSelection, setManualSelection] = useState({
+    agentId: LLM_AGENTS[0].id,
+    atEventId: 0,
+  });
+
+  useEffect(() => {
+    if (!ticketId) {
+      setTicket(null);
+      setTicketError(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const detail = await getTicket(ticketId);
+        if (!cancelled) {
+          setTicket(detail);
+          setTicketError(null);
+        }
+      } catch (err) {
+        if (!cancelled) setTicketError(errorMessage(err));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ticketId, state.technicalStatus, state.reviewDecision]);
+
+  const selected = state.lastEventId > manualSelection.atEventId
+    ? state.selectedAgentId ?? manualSelection.agentId
+    : manualSelection.agentId;
+  const selectedDefinition = LLM_AGENTS.find((agent) => agent.id === selected) ?? LLM_AGENTS[0];
+  const selectedRuntime = state.agents[selected];
+  const nodeTypes = useMemo(() => ({ workflow: WorkflowNode }), []);
   const nodes = useMemo(
-    () => [
-      { id: "planner", type: "agent", position: { x: 330, y: 20 }, data: { name: "Planner Agent", status: "Thinking", icon: BrainCircuit } },
-      { id: "transaction", type: "agent", position: { x: 40, y: 250 }, data: { name: "Transaction Agent", status: "Working", icon: Network } },
-      { id: "report", type: "agent", position: { x: 330, y: 250 }, data: { name: "Report Agent", status: "Idle", icon: FileText } },
-      { id: "kyc", type: "agent", position: { x: 620, y: 250 }, data: { name: "KYC Agent", status: "Completed", icon: ShieldCheck } },
-    ],
-    []
+    () => WORKFLOW_NODES.map((node) => ({
+      id: node.id,
+      type: "workflow",
+      position: node.position,
+      data: {
+        ...node,
+        runtimeStatus: state.agents[node.id]?.status ?? "IDLE",
+        selected: node.id === selected,
+      },
+    })),
+    [selected, state.agents]
   );
   const edges = useMemo(
-    () => [
-      { id: "p-t", source: "planner", target: "transaction", type: "smoothstep", animated: true, markerEnd: { type: MarkerType.ArrowClosed }, style: { stroke: "#2563EB", strokeWidth: 2 } },
-      { id: "p-r", source: "planner", target: "report", type: "smoothstep", animated: true, markerEnd: { type: MarkerType.ArrowClosed }, style: { stroke: "#2563EB", strokeWidth: 2 } },
-      { id: "p-k", source: "planner", target: "kyc", type: "smoothstep", animated: true, markerEnd: { type: MarkerType.ArrowClosed }, style: { stroke: "#2563EB", strokeWidth: 2 } },
-    ],
-    []
+    () => WORKFLOW_EDGES.map((edge) => ({
+      ...edge,
+      type: "smoothstep",
+      animated: state.technicalStatus === "RUNNING",
+      markerEnd: { type: MarkerType.ArrowClosed },
+      style: {
+        stroke: state.technicalStatus === "FAILED" ? "#F87171" : "#94A3B8",
+        strokeWidth: 1.5,
+      },
+    })),
+    [state.technicalStatus]
   );
+
+  const canReview =
+    Boolean(ticket?.can_review) ||
+    (
+      state.technicalStatus === "COMPLETED" &&
+      !state.reviewDecision &&
+      Boolean(
+        (state.finalOutput as { is_laundering_suspect?: boolean } | null)
+          ?.is_laundering_suspect
+      )
+    );
+
+  const showFailedBanner =
+    state.technicalStatus === "FAILED" ||
+    Boolean(state.lastErrorSummary) ||
+    Boolean(ticket?.last_error);
+
+  const onReview = async (decision: ReviewDecision) => {
+    if (!ticketId) return;
+    setReviewBusy(true);
+    try {
+      const updated = await reviewTicket(ticketId, decision);
+      setTicket(updated);
+    } catch (err) {
+      setTicketError(errorMessage(err));
+    } finally {
+      setReviewBusy(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Luồng Agent" subtitle="Trực quan hóa cách các AI Agent phối hợp trong điều tra AML." />
+      <PageHeader
+        title="Luồng Agent"
+        subtitle="Click ticket ID trên Lịch sử để mở luồng. SSE realtime khi đang chạy; khi xong xem log tool/agent và APPROVE/REJECT."
+      />
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="rounded-full bg-white px-3 py-1.5 text-slate-600 ring-1 ring-slate-200">
+          Ticket: <strong className="text-slate-900">{ticketId ?? "chưa chọn"}</strong>
+        </span>
+        <span className={cn(
+          "rounded-full px-3 py-1.5 font-medium ring-1",
+          connection === "OPEN"
+            ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+            : connection === "ERROR"
+              ? "bg-red-50 text-red-700 ring-red-200"
+              : connection === "CONNECTING"
+                ? "bg-amber-50 text-amber-800 ring-amber-200"
+                : connection === "CLOSED"
+                  ? "bg-slate-100 text-slate-700 ring-slate-300"
+                  : "bg-slate-100 text-slate-600 ring-slate-200",
+        )}>
+          SSE: {ticketId ? connection : "IDLE (chưa chọn ticket)"}
+        </span>
+        <span className={cn(
+          "rounded-full px-3 py-1.5 font-medium ring-1",
+          runtimeStatusStyles[state.technicalStatus],
+        )}>
+          Investigation: {ticketId ? state.technicalStatus : "IDLE (chưa chọn ticket)"}
+        </span>
+        {ticket?.display_status && (
+          <span className="rounded-full bg-white px-3 py-1.5 text-slate-700 ring-1 ring-slate-200">
+            Status: <strong>{ticket.display_status}</strong>
+          </span>
+        )}
+      </div>
+      {!ticketId && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+          Click <strong>ID</strong> trên Lịch sử (hoặc bấm <strong>Run</strong> ticket PENDING) để mở
+          luồng agent + SSE.
+        </div>
+      )}
+      {(error || ticketError) && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+          {error || ticketError}
+        </div>
+      )}
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <section className="h-[560px] overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-slate-200/70">
-          <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView proOptions={{ hideAttribution: true }} nodesDraggable={false}>
-          </ReactFlow>
-        </section>
-        <section className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70">
-          <h2 className="text-lg font-semibold text-slate-950">Active Agents</h2>
-          <div className="mt-4 space-y-2">
-            {agents.map((agent) => {
-              const Icon = agent.icon;
-              const isSelected = selected === agent.name;
-              return (
-                <button
-                  key={agent.name}
-                  onClick={() => setSelected(agent.name)}
-                  className={cn("w-full rounded-xl p-3 text-left transition hover:bg-slate-50", isSelected && "bg-blue-50 ring-1 ring-blue-200")}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="flex items-center gap-3 font-medium text-slate-950">
-                      <Icon className="size-4 text-blue-600" /> {agent.name}
-                    </span>
-                    <ChevronDown className={cn("size-4 text-slate-500 transition", isSelected && "rotate-180")} />
-                  </div>
-                  <AnimatePresence initial={false}>
-                    {isSelected && (
-                      <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                        <div className="mt-4 border-t border-slate-200 pt-3">
-                          <p className="text-xs font-semibold text-slate-500">Recent Actions</p>
-                          <div className="mt-3 space-y-3">
-                            {activityFeed[agent.name as keyof typeof activityFeed].map(([time, action]) => (
-                              <div key={time + action} className="flex gap-3 text-sm">
-                                <span className="font-medium text-slate-500">{time}</span>
-                                <span className="text-slate-700">{action}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-      </div>
-    </div>
-  );
-}
-
-function MonitoringPage() {
-  return (
-    <div className="space-y-6">
-      <PageHeader title="Agent Monitoring" subtitle="Theo dõi sức khỏe vận hành, mức sử dụng tài nguyên và thông lượng của các AML Agent đang hoạt động." />
-      <div className="grid gap-4 lg:grid-cols-2">
-        {agents.map((agent) => {
-          const Icon = agent.icon;
-          return (
-            <section key={agent.name} className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70 transition hover:shadow-md">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="grid size-11 place-items-center rounded-xl bg-blue-50 text-blue-700 ring-1 ring-blue-100">
-                    <Icon className="size-5" />
-                  </div>
-                  <div>
-                    <h2 className="font-semibold text-slate-950">{agent.name}</h2>
-                    <p className="mt-1 text-sm text-slate-600">Agent status: {agent.status}</p>
-                  </div>
-                </div>
-                <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200">Healthy</span>
-              </div>
-              <div className="mt-5 grid gap-4 sm:grid-cols-3">
-                <Metric label="Health" value={agent.health} />
-                <Metric label="Latency" value={agent.latency} />
-                <Metric label="Tasks processed" value={agent.tasks.toLocaleString()} />
-              </div>
-              <div className="mt-5 rounded-xl bg-slate-50 p-4">
-                <p className="text-sm font-medium text-slate-700">Current action</p>
-                <p className="mt-1 text-sm text-slate-600">{agent.action}</p>
-                <div className="mt-4 flex items-center justify-between text-xs font-medium text-slate-500">
-                  <span>Resource utilization</span>
-                  <span>{agent.utilization}%</span>
-                </div>
-                <div className="mt-2 h-2 rounded-full bg-slate-200">
-                  <div className="h-full rounded-full bg-blue-600" style={{ width: `${agent.utilization}%` }} />
-                </div>
-              </div>
-              <div className="mt-5 h-20">
-                <ResponsiveContainer>
-                  <LineChart data={agent.data}>
-                    <Line dataKey="v" type="monotone" stroke="#2563EB" strokeWidth={2.5} dot={false} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="mt-5 flex flex-wrap gap-2">
-                <button className="inline-flex h-10 items-center gap-2 rounded-xl bg-white px-4 text-sm font-medium text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50">
-                  <RefreshCw className="size-4" /> Restart
-                </button>
-                <button className="inline-flex h-10 items-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-medium text-white transition hover:bg-blue-700">
-                  <Download className="size-4" /> Export logs
-                </button>
-              </div>
-            </section>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-xs font-medium text-slate-500">{label}</p>
-      <p className="mt-1 text-lg font-semibold text-slate-950">{value}</p>
-    </div>
-  );
-}
-
-function ConfigPage() {
-  const [level, setLevel] = useState("Medium");
-  const [model, setModel] = useState("AML-Core-v2.1");
-
-  return (
-    <div className="space-y-6">
-      <PageHeader title="Cấu hình Agent" />
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,7fr)_minmax(280px,3fr)]">
-        <section className="space-y-5">
-          <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70">
-            <h2 className="text-lg font-semibold text-slate-950">Chỉnh sửa lệnh hệ thống</h2>
-            <textarea
-              className="mt-4 min-h-72 w-full resize-y rounded-xl bg-slate-50 p-4 text-sm leading-6 text-slate-900 outline-none ring-1 ring-slate-200 transition placeholder:text-slate-500 focus:bg-white focus:ring-2 focus:ring-blue-600"
-              placeholder="Enter system prompt..."
-              defaultValue={"You are an AML investigation agent. Prioritize explainable risk signals, preserve audit trails, and escalate cases with layered transfers, high-velocity inflows, or inconsistent KYC evidence."}
-            />
-            <div className="mt-4 flex flex-wrap justify-end gap-2">
-              <button className="inline-flex h-10 items-center gap-2 rounded-xl bg-white px-4 text-sm font-medium text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50">
-                <RefreshCw className="size-4" /> Reset
-              </button>
-              <button className="inline-flex h-10 items-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-medium text-white transition hover:bg-blue-700">
-                <Save className="size-4" /> Save Configuration
-              </button>
-            </div>
-          </div>
-
-          <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70">
-            <h2 className="text-lg font-semibold text-slate-950">Model Level</h2>
-            <div className="mt-4 grid gap-3 md:grid-cols-3">
-              {modelLevels.map((item) => {
-                const Icon = item.icon;
-                const selected = level === item.title;
-                return (
-                  <button
-                    key={item.title}
-                    onClick={() => setLevel(item.title)}
-                    className={cn(
-                      "rounded-xl bg-slate-50 p-4 text-left ring-1 ring-slate-200 transition hover:bg-blue-50",
-                      selected && "bg-white ring-2 ring-blue-600 shadow-[0_0_0_4px_rgba(37,99,235,0.10)]"
-                    )}
-                  >
-                    <Icon className={cn("size-5", selected ? "text-blue-600" : "text-slate-500")} />
-                    <p className="mt-4 font-semibold text-slate-950">{item.title}</p>
-                    <p className="mt-2 text-sm leading-6 text-slate-600">{item.description}</p>
-                  </button>
-                );
+        <div className="space-y-3">
+          <section className="h-[640px] overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-slate-200/70">
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={nodeTypes}
+              fitView
+              fitViewOptions={{ padding: 0.18 }}
+              minZoom={0.25}
+              proOptions={{ hideAttribution: true }}
+              nodesDraggable={false}
+              nodesConnectable={false}
+              onNodeClick={(_, node) => setManualSelection({
+                agentId: node.id,
+                atEventId: state.lastEventId,
               })}
-            </div>
-          </div>
-        </section>
+            />
+          </section>
 
-        <aside className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70">
-          <h2 className="text-lg font-semibold text-slate-950">Available Models</h2>
-          <div className="mt-4 space-y-2">
-            {models.map((item) => {
-              const selected = model === item;
-              return (
-                <button
-                  key={item}
-                  onClick={() => setModel(item)}
-                  className={cn(
-                    "flex w-full items-center justify-between rounded-xl px-4 py-3 text-left text-sm font-medium transition",
-                    selected ? "bg-blue-600 text-white shadow-sm" : "bg-slate-50 text-slate-700 hover:bg-blue-50 hover:text-blue-700"
-                  )}
-                >
-                  <span>{item}</span>
-                  <span className={cn("size-2.5 rounded-full", selected ? "bg-white" : "bg-slate-300")} />
-                </button>
-              );
-            })}
+          {/* Bottom strip: errors + approve/reject + short timeline */}
+          <section className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70">
+            {showFailedBanner && (
+              <div className="mb-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                <p className="font-semibold">Investigation error</p>
+                <p className="mt-1">
+                  {state.lastErrorSummary
+                    || ticket?.last_error
+                    || "Multi-agent failed — xem log bên cạnh / timeline."}
+                </p>
+              </div>
+            )}
+
+            {state.technicalStatus === "RUNNING" && (
+              <p className="mb-3 text-sm text-blue-700">
+                Đang chạy realtime — log agent/tool cập nhật qua SSE…
+              </p>
+            )}
+
+            {state.timeline.length > 0 && (
+              <div className="mb-3 max-h-36 space-y-1 overflow-y-auto rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  Lịch sử (agent / tool / review)
+                </p>
+                {state.timeline.map((event) => (
+                  <div key={event.id} className="flex gap-2 text-xs leading-5 text-slate-700">
+                    <span className="shrink-0 font-mono text-slate-400">
+                      {new Date(event.created_at).toLocaleTimeString("vi-VN")}
+                    </span>
+                    <span className={cn(
+                      "font-medium",
+                      event.event_type.includes("FAILED") ? "text-red-700" : "text-slate-800",
+                    )}>
+                      {event.event_type}
+                    </span>
+                    {event.agent_id && <span className="text-blue-700">{event.agent_id}</span>}
+                    {event.tool_name && (
+                      <span className="font-mono text-violet-700">{event.tool_name}</span>
+                    )}
+                    <span className="truncate text-slate-600">{event.summary}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex min-h-10 flex-wrap items-center justify-center gap-2">
+              {canReview ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={reviewBusy}
+                    onClick={() => void onReview("APPROVED")}
+                    className="inline-flex h-10 items-center rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    APPROVE
+                  </button>
+                  <button
+                    type="button"
+                    disabled={reviewBusy}
+                    onClick={() => void onReview("REJECTED")}
+                    className="inline-flex h-10 items-center rounded-xl bg-red-600 px-4 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                  >
+                    REJECT
+                  </button>
+                </>
+              ) : ticket?.review_decision === "APPROVED" ? (
+                <span className="inline-flex h-10 items-center rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white">
+                  APPROVED
+                </span>
+              ) : ticket?.review_decision === "REJECTED" ? (
+                <span className="inline-flex h-10 items-center rounded-xl bg-red-600 px-4 text-sm font-semibold text-white">
+                  REJECTED
+                </span>
+              ) : ticket?.review_decision === "FALSE" ? (
+                <span className="inline-flex h-10 items-center rounded-xl bg-slate-600 px-4 text-sm font-semibold text-white">
+                  FALSE
+                </span>
+              ) : null}
+            </div>
+          </section>
+        </div>
+
+        <section className="max-h-[860px] overflow-y-auto rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-950">{selectedDefinition.name}</h2>
+              <p className="mt-1 text-sm text-slate-500">{selectedDefinition.stage}</p>
+            </div>
+            <span className={cn(
+              "rounded-full px-2.5 py-1 text-xs font-medium ring-1",
+              runtimeStatusStyles[selectedRuntime?.status ?? "IDLE"],
+            )}>{selectedRuntime?.status ?? "IDLE"}</span>
           </div>
-        </aside>
+          <p className="mt-3 text-sm leading-6 text-slate-700">{selectedDefinition.role}</p>
+          <div className="my-4 border-t border-slate-200" />
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Chi tiết agent (tool / output)
+          </h3>
+          <div className="mt-3 space-y-3">
+            {selectedRuntime?.events.length ? (
+              selectedRuntime.events.map((event) => <EventCard key={event.id} event={event} />)
+            ) : (
+              <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-500 ring-1 ring-slate-200">
+                {state.technicalStatus === "RUNNING"
+                  ? "Đang chạy — chờ event của agent này…"
+                  : "Chưa có event cho agent này (chọn node khác hoặc Run ticket)."}
+              </p>
+            )}
+          </div>
+          {state.finalOutput && (
+            <FinalOutputWithCitations finalOutput={state.finalOutput} />
+          )}
+          {!state.finalOutput && ticket?.result && (
+            <FinalOutputWithCitations finalOutput={ticket.result as Record<string, unknown>} />
+          )}
+        </section>
       </div>
     </div>
   );
 }
 
-const pages: Record<PageKey, () => ReactElement> = {
-  dashboard: DashboardPage,
-  history: HistoryPage,
-  workflow: WorkflowPage,
-  monitoring: MonitoringPage,
-  config: ConfigPage,
-};
+function ConfigPage({ control: _control }: { control: InvestigationControlState }) {
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Cấu hình Agent"
+        subtitle="Model và soft prompt riêng cho từng agent (không dùng chung một cấu hình)."
+      />
+      <AgentSettingsPanel />
+    </div>
+  );
+}
 
 export default function Home() {
   const [activePage, setActivePage] = useState<PageKey>("dashboard");
-  const ActivePage = pages[activePage];
+  const [workflowTicketId, setWorkflowTicketId] = useState<string | null>(null);
+  const control = useInvestigationControl();
+  const activeContent = {
+    dashboard: (
+      <DashboardPage
+        control={control}
+        onGoHistory={() => setActivePage("history")}
+      />
+    ),
+    history: (
+      <HistoryPage onGoWorkflow={(ticketId) => {
+        setWorkflowTicketId(ticketId);
+        setActivePage("workflow");
+      }} />
+    ),
+    workflow: <WorkflowPage key={workflowTicketId ?? "empty"} ticketId={workflowTicketId} />,
+    config: <ConfigPage control={control} />,
+  }[activePage];
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-950">
       <header className="fixed inset-x-0 top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-4 sm:px-6 lg:px-8">
           <button onClick={() => setActivePage("dashboard")} className="flex items-center gap-3">
-            <span className="grid size-9 place-items-center rounded-xl bg-blue-600 text-white">
-              <ShieldCheck className="size-5" />
-            </span>
+            <img
+              src="/logo.png"
+              className="size-9 rounded-xl object-cover"
+              alt="AML Logo"
+            />
             <span className="hidden text-base font-semibold text-slate-950 sm:block">AML-Investigator</span>
           </button>
 
@@ -760,7 +1124,7 @@ export default function Home() {
             exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.18, ease: "easeOut" }}
           >
-            <ActivePage />
+            {activeContent}
           </motion.div>
         </AnimatePresence>
       </main>
