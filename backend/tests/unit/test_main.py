@@ -39,3 +39,21 @@ def test_unconfigured_origin_is_not_allowed_by_cors() -> None:
     )
 
     assert "access-control-allow-origin" not in response.headers
+
+
+def test_vercel_preview_origin_is_allowed_via_regex() -> None:
+    client = TestClient(
+        create_app(cors_origins="https://*.vercel.app,http://localhost:3000")
+    )
+    preview = "https://aml-investigator-git-main-team.vercel.app"
+
+    response = client.options(
+        "/health",
+        headers={
+            "Origin": preview,
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == preview

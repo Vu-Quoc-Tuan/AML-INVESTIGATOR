@@ -1,0 +1,127 @@
+name: CD Frontend (Vercel)
+
+# Architecture:
+#   Browser → FE on Vercel (HTTPS :443)
+#   FE → https://aml-api.vutuan.indevs.in/api/v1 (Cloudflare Tunnel)
+#   Tunnel → 127.0.0.1:8000 (BE Docker on self-hosted server)
+#
+# Deploys ONLY the Next.js frontend to Vercel.
+# Backend: .github/workflows/cd.yml (self-hosted compose up backend).
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+      - dev
+    paths:
+      - "frontend/**"
+      - ".github/workflows/cd-frontend.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aml-frontend-vercel
+  cancel-in-progress: true
+
+jobs:
+  deploy-vercel:
+    name: Deploy frontend to Vercel
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Resolve API base URL
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Public BE via Cloudflare Tunnel → 127.0.0.1:8000 on the server.
+          # Must include /api/v1 — FE client joins paths like /tickets under this base.
+          value="${{ vars.NEXT_PUBLIC_API_BASE_URL }}"
+          if [[ -z "$value" ]]; then
+            value="https://aml-api.vutuan.indevs.in/api/v1"
+          fi
+          echo "NEXT_PUBLIC_API_BASE_URL=$value" >> "$GITHUB_ENV"
+
+      - name: Require Vercel secrets
+        env:
+          VERCEL_TOKEN_PRESENT: ${{ secrets.VERCEL_TOKEN != '' }}
+          VERCEL_ORG_ID_PRESENT: ${{ secrets.VERCEL_ORG_ID != '' }}
+          VERCEL_PROJECT_ID_PRESENT: ${{ secrets.VERCEL_PROJECT_ID != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ "$VERCEL_TOKEN_PRESENT" == "true" ]] || missing+=(VERCEL_TOKEN)
+          [[ "$VERCEL_ORG_ID_PRESENT" == "true" ]] || missing+=(VERCEL_ORG_ID)
+          [[ "$VERCEL_PROJECT_ID_PRESENT" == "true" ]] || missing+=(VERCEL_PROJECT_ID)
+          if ((${#missing[@]})); then
+            echo "::error title=Missing GitHub secrets::Set repository secrets: ${missing[*]}"
+            echo "One-time setup:"
+            echo "  1) npm i -g vercel && vercel login && cd frontend && vercel link"
+            echo "  2) Copy orgId / projectId from frontend/.vercel/project.json"
+            echo "  3) Create token at https://vercel.com/account/tokens"
+            echo "  4) Add GitHub Actions secrets: VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID"
+            exit 1
+          fi
+          echo "All required Vercel secrets are present."
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Pull Vercel project settings
+        working-directory: frontend
+        run: vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
+
+      - name: Bake public API URL for the Next.js client bundle
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Ensure build sees the tunnel API even if the Vercel project env is empty.
+          printf 'NEXT_PUBLIC_API_BASE_URL=%s\n' "$NEXT_PUBLIC_API_BASE_URL" > .env.production
+
+      - name: Build for Vercel
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_BASE_URL: ${{ env.NEXT_PUBLIC_API_BASE_URL }}
+        run: vercel build --prod --token="${{ secrets.VERCEL_TOKEN }}"
+
+      - name: Deploy prebuilt production
+        id: deploy
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          # Vercel project rootDirectory must be empty (not "frontend") because
+          # this job already runs inside ./frontend.
+          url="$(vercel deploy --prebuilt --prod --yes --token="${{ secrets.VERCEL_TOKEN }}")"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployed: $url"
+
+      - name: Write deployment summary
+        shell: bash
+        run: |
+          {
+            echo "## Frontend deployed to Vercel"
+            echo
+            echo "- URL: ${{ steps.deploy.outputs.url }}"
+            echo "- API (Cloudflare): \`$NEXT_PUBLIC_API_BASE_URL\`"
+            echo "- Flow: Browser → Vercel FE → Cloudflare tunnel → BE :8000"
+            echo "- Ref: \`${GITHUB_REF_NAME}\` @ \`${GITHUB_SHA:0:7}\`"
+            echo
+            echo "Backend CORS_ORIGINS must include this Vercel origin (GitHub Environment development)."
+          } >> "$GITHUB_STEP_SUMMARY"

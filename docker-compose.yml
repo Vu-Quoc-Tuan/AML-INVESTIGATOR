@@ -1,26 +1,68 @@
+# Architecture (production):
+#
+#   Browser → FE on Vercel (HTTPS)
+#        → https://aml-api.vutuan.indevs.in  (Cloudflare Tunnel)
+#        → 127.0.0.1:8000  (backend service below)
+#
+# CD backend (self-hosted) only runs: docker compose up backend
+# Production FE is deployed by .github/workflows/cd-frontend.yml (Vercel).
+# The frontend service here is for local Docker only (make up).
+
 services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: aml-investigator-backend:local
+    restart: unless-stopped
+    ports:
+      # Loopback only — Cloudflare Tunnel / cloudflared connects here.
+      # Required by .github/workflows/cd.yml (backend Compose contract).
+      - "127.0.0.1:8000:8000"
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      # GitHub Environment vars.CORS_ORIGINS must be set for CD.
+      # Include the real Vercel origin(s), e.g.:
+      #   https://aml-investigator.vercel.app,https://*.vercel.app,http://localhost:3000
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      DETECTION_DB_PATH: /app/runtime/detection_queue.db
+    volumes:
+      - backend-runtime:/app/runtime
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  # Local Docker UI only. Production FE → Vercel (not this service).
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # Browser calls host-mapped backend, not the Docker service name.
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api/v1}
+    image: aml-investigator-frontend:local
+    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
       NODE_ENV: production
       NEXT_TELEMETRY_DISABLED: "1"
       HOSTNAME: "0.0.0.0"
+      PORT: "3000"
+    depends_on:
+      backend:
+        condition: service_healthy
 
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    image: aml-investigator-backend:local
-    restart: always
-    ports:
-      - target: 8000
-        published: 8000
-        protocol: tcp
-        mode: host
-        host_ip: 127.0.0.1
-    environment:
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+volumes:
+  backend-runtime:
