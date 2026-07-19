@@ -9,7 +9,10 @@ from app.detection.contracts import (
     CandidateStatus, DecisionKind, DetectionDecision, RunMode, RunTrigger,
 )
 from app.detection.repository import (
-    ConflictingOutcomeError, DetectionRepository, ModeMismatchError,
+    CandidateBusyError,
+    ConflictingOutcomeError,
+    DetectionRepository,
+    ModeMismatchError,
 )
 from app.streaming.schemas import HOME_BANK_ID, TransactionEventV1
 
@@ -86,6 +89,22 @@ def test_failed_candidate_retries_only_to_limit(tmp_path: Path) -> None:
     assert repository.claim_next(RunTrigger.MANUAL, now=NOW + timedelta(seconds=20)) is None
 
 
+def test_explicit_manual_retry_does_not_wait_for_auto_retry_delay(tmp_path: Path) -> None:
+    repository = repo(tmp_path, max_attempts=2, retry_delay_seconds=300)
+    candidate_id = repository.enqueue_candidate(event(), decision(DecisionKind.QUEUED))
+    first = repository.claim_candidate(candidate_id, RunTrigger.MANUAL, now=NOW)
+    repository.mark_failed(first.candidate_id, "tool failed", now=NOW)
+
+    retried = repository.claim_candidate(
+        candidate_id,
+        RunTrigger.MANUAL,
+        now=NOW + timedelta(seconds=1),
+    )
+
+    assert retried.status is CandidateStatus.PROCESSING
+    assert retried.attempts == 2
+
+
 def test_expired_processing_lease_can_be_reclaimed(tmp_path: Path) -> None:
     repository = repo(tmp_path, lease_seconds=5)
     repository.enqueue_candidate(event(), decision(DecisionKind.QUEUED))
@@ -96,23 +115,51 @@ def test_expired_processing_lease_can_be_reclaimed(tmp_path: Path) -> None:
     assert reclaimed.attempts == 2
 
 
-def test_completion_persists_case_id(tmp_path: Path) -> None:
+def test_completion_persists_case_id_and_result(tmp_path: Path) -> None:
     repository = repo(tmp_path)
     repository.enqueue_candidate(event(), decision(DecisionKind.QUEUED))
     claimed = repository.claim_next(RunTrigger.MANUAL, now=NOW)
-    repository.mark_completed(claimed.candidate_id, "case-1")
+    repository.mark_completed(
+        claimed.candidate_id,
+        "case-1",
+        result={"case_id": "case-1", "overall_risk_level": "MEDIUM"},
+    )
     with sqlite3.connect(repository.db_path) as connection:
         row = connection.execute(
-            "SELECT status,case_id FROM investigation_candidates"
+            "SELECT status,case_id,result_json FROM investigation_candidates"
         ).fetchone()
-    assert row == ("COMPLETED", "case-1")
+    assert row[0] == "COMPLETED"
+    assert row[1] == "case-1"
+    assert "MEDIUM" in row[2]
+    stored = repository.get_candidate(claimed.candidate_id)
+    assert stored is not None
+    assert stored.result == {"case_id": "case-1", "overall_risk_level": "MEDIUM"}
 
 
-def test_schema_uses_wal_and_version_one(tmp_path: Path) -> None:
+def test_list_candidates_filters_by_status(tmp_path: Path) -> None:
+    repository = repo(tmp_path)
+    first = repository.enqueue_candidate(event("1"), decision(DecisionKind.QUEUED))
+    repository.enqueue_candidate(event("2"), decision(DecisionKind.QUEUED))
+    claimed = repository.claim_next(RunTrigger.MANUAL, now=NOW)
+    repository.mark_completed(claimed.candidate_id, "case-1")
+    pending = repository.list_candidates(status=CandidateStatus.PENDING)
+    completed = repository.list_candidates(status=CandidateStatus.COMPLETED)
+    assert len(pending) == 1
+    assert pending[0].event_id == "2"
+    assert len(completed) == 1
+    assert completed[0].candidate_id == first
+
+
+def test_schema_uses_wal_and_version_three(tmp_path: Path) -> None:
     repository = repo(tmp_path)
     with sqlite3.connect(repository.db_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
         assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(investigation_candidates)")
+        }
+        assert "result_json" in columns
 
 
 def test_concurrent_claims_never_return_same_candidate(tmp_path: Path) -> None:
@@ -127,3 +174,31 @@ def test_concurrent_claims_never_return_same_candidate(tmp_path: Path) -> None:
             )
         )
     assert len({claim.candidate_id for claim in claims}) == 2
+
+
+def test_single_run_claim_allows_only_one_active_candidate(tmp_path: Path) -> None:
+    repository = repo(tmp_path)
+    candidate_ids = [
+        repository.enqueue_candidate(event(str(index)), decision(DecisionKind.QUEUED))
+        for index in range(2)
+    ]
+
+    def claim(candidate_id: str):
+        try:
+            return repository.claim_candidate(
+                candidate_id,
+                RunTrigger.MANUAL,
+                now=NOW,
+                require_idle=True,
+            )
+        except (CandidateBusyError, RuntimeError) as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(claim, candidate_ids))
+
+    claimed = [item for item in results if not isinstance(item, Exception)]
+    rejected = [item for item in results if isinstance(item, Exception)]
+    assert len(claimed) == 1
+    assert len(rejected) == 1
+    assert len(repository.list_candidates(status=CandidateStatus.PROCESSING)) == 1

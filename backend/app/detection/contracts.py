@@ -20,6 +20,14 @@ class CandidateStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class ReviewDecision(StrEnum):
+    """Analyst disposition after multi-agent investigation."""
+
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    FALSE = "FALSE"  # not money laundering / false positive
+
+
 class RunMode(StrEnum):
     AUTO = "AUTO"
     MANUAL = "MANUAL"
@@ -81,4 +89,10 @@ class CandidateRecord:
     decision: DetectionDecision
     status: CandidateStatus
     attempts: int
+    case_id: str | None = None
+    last_error: str | None = None
+    result: dict[str, Any] | None = None
+    review_decision: ReviewDecision | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
 
